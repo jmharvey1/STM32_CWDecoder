@@ -26,7 +26,7 @@
 #include "pins_arduino.h"
 #include "wiring_private.h"
 #include <SPI.h>
-SPIClass mySPI(2); //Create an SPI instance on SPI1 port
+SPIClass mySPI(2); //Create an SPI instance on SPI1 port  // JMH2020128 use 2nd; i.e., spi2 port
 
 // Constructor when n is the number of LEDs in the strip
 WS2812B::WS2812B(uint16_t number_of_leds) :
@@ -90,16 +90,16 @@ void WS2812B::show(void)
   
   if (pixels==doubleBuffer)
   {
-	// pixels was using the first buffer
-	pixels	= doubleBuffer+numBytes;  // set pixels to second buffer
-	memcpy(pixels,doubleBuffer,numBytes);// copy first buffer to second buffer
+        // pixels was using the first buffer
+        pixels	= doubleBuffer+numBytes;  // set pixels to second buffer
+        memcpy(pixels,doubleBuffer,numBytes);// copy first buffer to second buffer
   }
   else
   {
-	// pixels was using the second buffer	  
-	pixels	= doubleBuffer;  // set pixels to first buffer
-	memcpy(pixels,doubleBuffer+numBytes,numBytes);	 // copy second buffer to first buffer 
-  }	
+        // pixels was using the second buffer
+        pixels	= doubleBuffer;  // set pixels to first buffer
+        memcpy(pixels,doubleBuffer+numBytes,numBytes);	 // copy second buffer to first buffer
+  }
 }
 
 /*Sets a specific pixel to a specific r,g,b colour 

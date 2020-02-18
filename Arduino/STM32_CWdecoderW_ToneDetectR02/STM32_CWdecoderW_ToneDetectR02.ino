@@ -6,7 +6,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200203";
+char RevDate[9] = "20200218";
 // MCU Friend TFT Display to STM32F (Blue Pill) pin connections
 //LCD pins  |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD |WR |RS |CS |RST|
 //STM32 pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0|PB6|PB7|PB8|PB9|
@@ -196,17 +196,32 @@ int scrnWidth;
 int px = 0; //mapped 'x' display touch value
 int py = 0; //mapped 'y' display touch value
 int LineLen = 27; //max number of characters to be displayed on one line
-int row = 7;//7; //max number of lines to be displayed
-int ylo = 200; //button touch reading 2.8" screen
-int yhi = 250; //button touch reading 2.8" screen
-int Stxl = 21; //Status touch reading 2.8" screen
-int Stxh = 130; //Status touch reading 2.8" screen
-int bxlo = 130; //blue button (CLEAR) touch reading 2.8" screen
-int bxhi = 200; //blue button (CLEAR)touch reading 2.8" screen
-int gxlo  = 200; //green button(MODE) touch reading 2.8" screen
-int gxhi  = 290; //green touch (MODE)reading 2.5" screen
-int curRow = 0; //Status touch reading 2.5" screen
-int offset = 0; //Status touch reading 2.5" screen
+//int row = 7;//7; //max number of lines to be displayed
+//int ylo = 200; //button touch reading 2.8" screen
+//int yhi = 250; //button touch reading 2.8" screen
+//int Stxl = 21; //Status touch reading 2.8" screen
+//int Stxh = 130; //Status touch reading 2.8" screen
+//int bxlo = 130; //blue button (CLEAR) touch reading 2.8" screen
+//int bxhi = 200; //blue button (CLEAR)touch reading 2.8" screen
+//int gxlo  = 200; //green button(MODE) touch reading 2.8" screen
+//int gxhi  = 290; //green touch (MODE)reading 2.5" screen
+//int CPL = 27; //number of characters each line that a 2.8" screen can contain 
+
+int row = 10; //max number of decoded text rows that can be displayed on a 3.5" screen
+int ylo = 0; //button touch reading 3.5" screen
+int yhi = 40; //button touch reading 3.5" screen
+int Stxl = 0; //Status touch reading 3.5" screen
+int Stxh = 150; //Status touch reading 3.5" screen
+int bxlo = 155; //button touch reading 3.5" screen
+int bxhi = 236; //button touch reading 3.5" screen
+int gxlo  = 238; //button touch reading 3.5" screen
+int gxhi  = 325; //button touch reading 3.5" screen
+int CPL = 40; //number of characters each line that a 2.8" screen can contain 
+
+int curRow = 0; 
+int offset = 0; 
+
+
 bool newLineFlag = false;
 char Pgbuf[448];
 char Msgbuf[50];
@@ -737,27 +752,6 @@ void KeyEvntSR() {
     period = CalcAvgPrd(period);
     //period = 0;
     return; // ok, we are done with evaluating this usable key event
-//  }
-//  else {
-//    // if here, this was an atypical event, & may indicate a need to recalculate the average period.
-//    //Serial.print("*");
-//    //Serial.print(period);
-//    //Serial.print("*");
-//    if (period > 0) { //this too is correct for when the wpm speed as been slow & now needs to speed by a significant amount
-//      ++badKeyEvnt;
-//      //Serial.print("*");
-//      if (badKeyEvnt >= 20) {
-//        //Serial.print("*");
-//        period = CalcAvgPrd(period);
-//        period = 0;
-//        badKeyEvnt = 0;
-//        noSigStrt =  millis();//jmh20190717added to prevent an absurd value
-//        //noSigStrt =  micros();
-//        letterBrk = 0;
-//      }
-//    }
-//    //    if(Test) Serial.println(DeCodeVal); //we didn't experience a full keyclosure event on this pass through the loop [this is normal]
-//  }
 }// End CW Decoder Interrupt routine
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -886,11 +880,11 @@ void Timer_ISR(void) {
     //digitalWrite(DataOutPin, HIGH); //for timing/tuning tests only
     int k = analogRead(PB1);    // read the ADC value from pin PB1; (k = 0 to 4096)
     k -= 2058; // form into a signed int
-    if (k > 2000 | k < -2000) {
-      k = kOld; //bad data point zero it out
-      OvrLd = true;
-    }
-    else kOld = k;
+//    if (k > 2000 | k < -2000) {
+//      k = kOld; //bad data point zero it out
+//      OvrLd = true;
+//    }
+//    else kOld = k;
     ProcessSample(k, CurCnt);
     //Serial.println(k);// enable to graph raw DAC values
     k = abs(k);
@@ -947,25 +941,29 @@ void Timer_ISR(void) {
     Serial.print(AvgToneSqlch);//Gray
     Serial.print("\t");
   }
-  if (armHi && ( ToneLvl > SqlchVal)) {
-    toneDetect = true; //Had the same Tonestate 2X in a row. So go with it
-  }
-  if (armLo && ( ToneLvl < SqlchVal)) {
-    toneDetect = false; //Had the same Tonestate 2X in a row. So go with it
-    //TnLpCnt = 0;
-  }
-  if (!armHi && ( ToneLvl > SqlchVal)) { //+50
-    armHi = true;
-    armLo = false;
-    //toneDetect = true;
-  }
-  if (!armLo && ( ToneLvl < SqlchVal)) { //+50
-    armHi = false;
-    armLo = true;
-    //toneDetect = false;
-    ToneOnCnt = 0;
-    //TnLpCnt = 0;
-  }
+  if (( ToneLvl > SqlchVal)) {
+    toneDetect = true; 
+  } else toneDetect = false;
+
+//  if (armHi && ( ToneLvl > SqlchVal)) {
+//    toneDetect = true; //Had the same Tonestate 2X in a row. So go with it
+//  }
+//  if (armLo && ( ToneLvl < SqlchVal)) {
+//    toneDetect = false; //Had the same Tonestate 2X in a row. So go with it
+//    //TnLpCnt = 0;
+//  }
+//  if (!armHi && ( ToneLvl > SqlchVal)) { //+50
+//    armHi = true;
+//    armLo = false;
+//    //toneDetect = true;
+//  }
+//  if (!armLo && ( ToneLvl < SqlchVal)) { //+50
+//    armHi = false;
+//    armLo = true;
+//    //toneDetect = false;
+//    ToneOnCnt = 0;
+//    //TnLpCnt = 0;
+//  }
   loopcnt -= 1;
   if (loopcnt < 0) {
     NoiseAvgLvl = (30 * NoiseAvgLvl + (noise)) / 31; //every 3rd pass thru, recalculate running average of the composite noise signal
@@ -1046,22 +1044,26 @@ void Timer_ISR(void) {
       }//End Freq Dependant Lighting
 
     }//End modulated light tests
-    strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE));
+//    strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE));
   }//end Key Closed Tests
   else { //key open
-    if (OvrLd) {
-      LEDGREEN = 10;
-      LEDRED = 5;
-      LEDBLUE = 10;
-    }
-    else {
-      LEDGREEN = 0;
-      LEDRED = 0;
-      LEDBLUE = 0;
-    }
+    LEDGREEN = 0;
+    LEDRED = 0;
+    LEDBLUE = 0;
+//    if (OvrLd) {
+//      LEDGREEN = 10;
+//      LEDRED = 5;
+//      LEDBLUE = 10;
+//    }
+//    else {
+//      LEDGREEN = 0;
+//      LEDRED = 0;
+//      LEDBLUE = 0;
+//    }
 
-    strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE)); // set color of ASD 1293 LED to Green
+//    strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE)); // set color of ASD 1293 LED to Green
   }
+  strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE));
   strip.show(); //activate the RGB LED
   // this round of sound processing is complete, so setup to start to collect the next set of samples
   ResetGoertzel();
@@ -1076,13 +1078,6 @@ void setup() {
   pinMode(DataOutPin, OUTPUT);
   digitalWrite(DataOutPin, HIGH);
   pinMode(PB1, INPUT);
-  //delay(10000);
-  //pinMode(SlowData, INPUT_PULLUP);
-
-  //setup Gain Control Pin
-  //pinMode(GainPin, OUTPUT);
-  //digitalWrite(GainPin, HIGH); //Max Gain 40 db (adafruit MAX9814)
-  //digitalWrite(GainPin, LOW); //Max Gain 50 db
   Serial.begin(115200); // use the serial port
   strip.begin();
 
@@ -1109,25 +1104,21 @@ void setup() {
   scrnHeight = tft.height();
   scrnWidth = tft.width();
   displayW = scrnWidth;
-  if (scrnHeight == 320) { //we are using a 3.5 inch screen
-    row = 10; //max number of decoded text rows that can be displayed
-    ylo = 0; //button touch reading 3.5" screen
-    yhi = 40; //button touch reading 3.5" screen
-    Stxl = 0; //Status touch reading 3.5" screen
-    Stxh = 150; //Status touch reading 3.5" screen
-    bxlo = 155; //button touch reading 3.5" screen
-    bxhi = 236; //button touch reading 3.5" screen
-    gxlo  = 238; //button touch reading 3.5" screen
-    gxhi  = 325; //button touch reading 3.5" screen
-  }
+//  if (scrnHeight == 320) { //we are using a 3.5 inch screen
+//    row = 10; //max number of decoded text rows that can be displayed
+//    ylo = 0; //button touch reading 3.5" screen
+//    yhi = 40; //button touch reading 3.5" screen
+//    Stxl = 0; //Status touch reading 3.5" screen
+//    Stxh = 150; //Status touch reading 3.5" screen
+//    bxlo = 155; //button touch reading 3.5" screen
+//    bxhi = 236; //button touch reading 3.5" screen
+//    gxlo  = 238; //button touch reading 3.5" screen
+//    gxhi  = 325; //button touch reading 3.5" screen
+//   }
 
   DrawButton();
   Button2();
   WPMdefault();
-//  avgDit = 80; //average 'Dit' duration
-//  avgDeadSpace = avgDit;
-//  AvgLtrBrk = 3 * avgDit;
-//  avgDah = 240;
   tft.setCursor(textSrtX, textSrtY);
   tft.setTextColor(WHITE);//tft.setTextColor(WHITE, BLACK);
   tft.setTextSize(2);
@@ -1137,16 +1128,16 @@ void setup() {
 
   start = 0;
   WrdStrt = millis();
-  //WrdStrt = micros();
-  Serial.print("Starting...");
-  if (scrnHeight == 320) { //we are using a 3.5 inch screen
-    sprintf( Title, "             KW4KD (%s)           ", RevDate );
-    //dispMsg("             KW4KD (20200202)           ");
-  }
-  else {
-    sprintf( Title, "      KW4KD (%s)     ", RevDate );
-    //dispMsg("      KW4KD (20200202)     ");
-  }
+//  Serial.print("Starting...");
+  sprintf( Title, "             KW4KD (%s)           ", RevDate );
+//  if (scrnHeight == 320) { //we are using a 3.5 inch screen
+//    sprintf( Title, "             KW4KD (%s)           ", RevDate );
+//    
+//  }
+//  else {
+//    sprintf( Title, "      KW4KD (%s)     ", RevDate );
+//    
+//  }
   dispMsg(Title);
   wordBrk = ((5 * wordBrk) + 4 * avgDeadSpace) / 6;
   //End CW Decoder Setup
@@ -1393,7 +1384,7 @@ void chkChrCmplt() {
       charCnt = 0;
     }
     wordBrkFlg = true;
-    //Test = false;
+    
   }
 
   // for testing only
@@ -1510,14 +1501,12 @@ void SetModFlgs(int ModeVal) {
 void DisplayChar(unsigned int decodeval) {
   char curChr = 0 ;
   int pos1 = -1;
-  //CodeValBuf =0;
-  //if(decodeval !=0){
   // slide all values in the CodeValBuf to the left by one position & make sure that the array is terminated with a zero in the last position
   for (int i = 1; i < 7; i++) {
     CodeValBuf[i - 1] = CodeValBuf[i];
   }
   CodeValBuf[6] = 0;
-  //}
+
   if (decodeval == 2 || decodeval == 3) ++TEcnt;
   else TEcnt = 0;
   if (Test) Serial.print(decodeval);
@@ -1547,8 +1536,6 @@ void DisplayChar(unsigned int decodeval) {
     cursorX = 0;
     cursorY = curRow * (fontH + 10);
     tft.setCursor(cursorX, cursorY);
-    //offset = (curRow*LineLen);
-    //while(cnt <offset) cnt++;
     if (curRow + 1 > row)scrollpg(); // its time to Scroll the Text up one line
   }
   //sprintf ( Msgbuf, "%s%c", Msgbuf, curChr );
@@ -1611,14 +1598,11 @@ void dispMsg(char Msgbuf[50]) {
 //////////////////////////////////////////////////////////////////////
 void scrollpg() {
   //buttonEnabled =false;
-  //if(Test)Serial.print("ReDraw Frame\n");
   curRow = 0;
   cursorX = 0;
   cursorY = 0;
   cnt = 0;
   offset = 0;
-  //  if ( interruptPin == 2) KillINT();
-  //  else enableDisplay();
   enableDisplay();
   tft.fillRect(cursorX, cursorY, displayW, row * (fontH + 10), BLACK); //erase current page of text
   tft.setCursor(cursorX, cursorY);
@@ -1627,9 +1611,9 @@ void scrollpg() {
     SetLtrBrk();
     chkChrCmplt();
     tft.print(Pgbuf[cnt]);
-    if (displayW == 480) Pgbuf[cnt] = Pgbuf[cnt + 40]; //shift existing text character forward by one line
-    else Pgbuf[cnt] = Pgbuf[cnt + 27]; //shift existing text character forward by one line
-
+//    if (displayW == 480) Pgbuf[cnt] = Pgbuf[cnt + 40]; //shift existing text character forward by one line
+//    else Pgbuf[cnt] = Pgbuf[cnt + 27]; //shift existing text character forward by one line
+    Pgbuf[cnt] = Pgbuf[cnt + CPL]; //shift existing text character forward by one line
     cnt++;
     //delay(300);
     if (((cnt) - offset)*fontW >= displayW) {
