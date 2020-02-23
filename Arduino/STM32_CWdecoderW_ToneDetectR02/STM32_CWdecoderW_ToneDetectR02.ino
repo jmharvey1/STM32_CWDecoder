@@ -645,7 +645,7 @@ void KeyEvntSR() {
     //unsigned long deadSpace = start-noSigStrt;
     deadSpace = start - noSigStrt;
     letterBrk = 0;
-    ltrCmplt = -1800; // used in plot modee, to show where/when letter breaks are detected 
+    ltrCmplt = -1800; // used in plot mode, to show where/when letter breaks are detected 
     CalcAvgdeadSpace = true;
     
     if (wordBrkFlg) {
@@ -879,7 +879,7 @@ void Timer_ISR(void) {
   if (CurCnt <= NL) {//if true; collect a sound data point
     //digitalWrite(DataOutPin, HIGH); //for timing/tuning tests only
     int k = analogRead(PB1);    // read the ADC value from pin PB1; (k = 0 to 4096)
-    k -= 2058; // form into a signed int
+    k -= 1987; // form into a signed int
 //    if (k > 2000 | k < -2000) {
 //      k = kOld; //bad data point zero it out
 //      OvrLd = true;
@@ -1324,7 +1324,7 @@ void SetLtrBrk(void)
   }
   
   if(wpm<35){
-    ltrBrk = int(1.7*(float(space))); //int(1.5*(float(space))); // Basic letter break interval
+    ltrBrk =  int(1.6*(float(space))); //int(1.7*(float(space))); //int(1.5*(float(space))); // Basic letter break interval //20200220 changed to 1.6 becuase was getting "L" when it should hve read "ED"
     //ltrBrk = avgDeadSpace + ((AvgLtrBrk - avgDeadSpace) / 2.0);
     if (BugMode) { //use special case spacing
       if (((DeCodeVal & 1) == 1) && (DeCodeVal > 3)) { //this dead space interval appears to be an mid-character event AND the last symbol detected was a "DAH".

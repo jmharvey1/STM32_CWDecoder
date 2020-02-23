@@ -20,6 +20,7 @@
 #define TIC_RATE 1000000    // in microseconds; should give 1.0Hz toggles
 MCUFRIEND_kbv tft;
 
+unsigned long AvgBias =0;
 uint16_t ID;
 void Timer_ISR(void);
 int toggle = 0;
@@ -43,6 +44,7 @@ uint8_t hh=conv2d(__TIME__), mm=conv2d(__TIME__+3), ss=conv2d(__TIME__+6);  // G
 
 
 void setup(void) {
+  pinMode(PB1, INPUT);
   tft.reset();
   
   ID = tft.readID();
@@ -62,7 +64,7 @@ void setup(void) {
   //tft.fillScreen(ILI9341_BLACK);
   //tft.fillScreen(ILI9341_GREY);
   tft.fillScreen(TFT_LIGHTGREY);
-  tft.fillScreen(TFT_LIGHTGREY);
+ 
   
   //tft.setTextColor(ILI9341_WHITE, ILI9341_GREY);  // Adding a background colour erases previous text automatically
   //tft.setTextColor(TFT_WHITE, ILI9341_GREY);  // Adding a background colour erases previous text automatically
@@ -131,7 +133,9 @@ void setup(void) {
 void loop() {
   Serial.print("Program Running"); 
   while(1){
-    delay(100);
+    delay(20);
+    int k = analogRead(PB1);    // read the ADC value from pin PB1; (k = 0 to 4096)
+    AvgBias = ((99* AvgBias) +k)/100;
   }
 }
 //////////////////////////////////////////////////////////////////////
@@ -188,6 +192,8 @@ void Timer_ISR(void) {
 
     //tft.fillCircle(120, 121, 3, ILI9341_RED);
     tft.fillCircle(120, 121, 3, TFT_RED);
+    sprintf(Bufr," Bias: %d", AvgBias );
+    dispMsg(Bufr, 20, 320, 3);
 } 
 //////////////////////////////////////////////////////////////////////
 
@@ -196,15 +202,19 @@ void dispMsg(char Msgbuf[32], int cursorX, int cursorY, int FontSz) {
   int curRow = 0;
   int offset =0;
   int fontH = 16;
-  int fontW = 12;
+  int fontW = 18;//12;
   int displayW = 320;
   int cnt = 0;
+  while (Msgbuf[msgpntr] != 0) ++msgpntr;
+  
+  //clear previous entry
+  tft.fillRect(cursorX , (cursorY), msgpntr * fontW, fontH + 10, TFT_LIGHTGREY);
   tft.setCursor(cursorX, cursorY);
   tft.setTextColor(TFT_BLACK);//tft.setTextColor(WHITE, BLACK);
   tft.setTextSize(FontSz);
+  msgpntr = 0;
   while ( Msgbuf[msgpntr] != 0) {
     char curChar = Msgbuf[msgpntr];
-    //if (curRow > 0) sprintf ( Pgbuf, "%s%c", Pgbuf, curChar);
     tft.print(curChar);
     msgpntr++;
     cnt++;
