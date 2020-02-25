@@ -1,3 +1,5 @@
+
+/* Rev: 2020-02-22 Adjusted values to work with GY-MAX4466 Mic Board
 /* Rev: 2020-01-29 1st attempt at porting Sketch to STM32 'Blue Pill' board*/
 /*
      The TFTLCD library comes from here:  https://github.com/prenticedavid/MCUFRIEND_kbv
@@ -6,7 +8,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200218";
+char RevDate[9] = "20200222";
 // MCU Friend TFT Display to STM32F (Blue Pill) pin connections
 //LCD pins  |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD |WR |RS |CS |RST|
 //STM32 pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0|PB6|PB7|PB8|PB9|
@@ -898,7 +900,8 @@ void Timer_ISR(void) {
   bool GudTone = true;
   if (mag < 2000) GudTone = false; //JMH20200128
   //float CurNoise = ((CurNoise) + ((0.8 * AvgVal) - mag)) / 2;
-  float CurNoise = ((CurNoise) + ((1.6*AvgVal) - mag)) / 2;
+  //float CurNoise = ((CurNoise) + ((1.6*AvgVal) - mag)) / 2;
+  float CurNoise = ((CurNoise) + ((1.2*AvgVal) - mag)) / 2;
   ToneLvl = mag;
   //noise = ((6 * noise) + (CurNoise)) / 7; // calculate the running average of the unfiltered digitized Sound
   noise = ((4 * noise) + (CurNoise)) / 5; // calculate the running average of the unfiltered digitized Sound
