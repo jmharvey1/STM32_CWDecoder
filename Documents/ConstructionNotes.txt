@@ -1,0 +1,107 @@
+For Hardware we'll need:
+a 3.5" TFT touch screen Display (More about that later)
+a GY-MAX4466 mic board
+a APA106 F8 LED.
+a  STM32 "Blue Pill" processor Board
+and to wire everything together, we'll need 22 female to female jumpers, each 10cm long.
+As shown here, I used double sided sticky tape to hold everything together.
+All parts can be had via EBay or Alliexpress, for a total project cost of ~$16.00 US.
+This project uses the "MCUFriend KBv" library.
+So be sure that the backside of your Display, has the same pin configuration, as what's shown here.
+The same point can be made for the Microphone board. Make sure your unit has 3 pins, uses the MAX4466 chip, 
+and confirm that the board's output pin is DC biased to the mid point of the 3.3 volt supply.
+
+On the software side   
+we're,using the Arduino IDE to transform the STM32 into a CW decoder, .
+Let me recommend you invest $2.35,  on a ST-Link V2 Programming Dongle
+(including shipping, my total cost, for this item, was $3.03)
+
+If you're new to the STM32 and or the ARDUINO IDE, I'd also recommend, taking a few minutes, and use the IDE to load the "Blinky or Blink" sketch on to the STM32.
+
+Before we can do any programming, the IDE needs to be setup to work with the STM32 family. 
+So, in the IDE, use the "File>Preferences" menu option to gain access to the "Additional Boards Manager, URLS" , and add the:
+
+	https://dan.drown.org/stm32duino/package_STM32duino_index.json 
+
+URL.  It's essential that you use this URL, when working with the sketches contained in this project. 
+With the URL is in place,  use the "Tools>Board" menu option to open the "Boards manager" by navigating up to the top of the Listing Box.
+Filter the pick list, by setting the "type" drop down control, to "contributed", and or enter "stm32f" in the “search box”.
+Then in the "list" area, look for "STM32F1XX/GD32F1XX By STM32duino". When you have it located, click it's "Install" button. 
+For the record I'm using version 2020.2.18 to make this video. 
+The next step is to relaunch the "Tools>Board" Menu option, navigate down, and find/select the "Board" setting, to read "Generic STM32F103C Series". 
+Proceed down, and set "variant:" to "STM32F103C8 (20Kram. 64K flash), "upload method:" to ST-Link. And Finally, confirm that "CPU Speed:" is 72 MHz, and "Optimize:" is set to "Smallest".
+I'm not going any deeper in the how to use the IDE to program Blue Pill boards, but you can check out one or more of the videos out there, that will walk you through the general process.
+Most will use the “Blinky” sketch as their example sketch. 
+Many of these videos use an FTDI as the transfer link. Ignore those references, and instead connect the ST-Link to the four end pins on the "Blue Pill" board. Pay close attention, to where the ground, & 3.3 volt pins are, on each of the two units. Their pin order is not the same. 
+Once satisfied that you have the jumpers interconnected correctly, you can "super" glue the jumper sockets to themselves. This preserves their order, & helps assure that its right time after time.  
+Also with the ST-Link interface, is you don't fool with shifting the on-board programming jumper back and forth as required with FTDI interface.
+For LINUX users, The project's Github site has a special folder, that includes a file that enables USB recognition of the ST-Link dongle, plus a "ReadMe", that explains where on the hard-drive this file needs to be placed.
+ 
+Once comfortable with the 'blinky' program, the next step is use the project's connection diagram to install the 15 jumpers that run from the "Blue Pill", to the display. 
+The GITHUB link contains a pdf version of the connection diagram. Look for it in the "Documents" folder.
+Note: The color of the jumpers shown on this diagram mean nothing. These colors were chosen solely for contrast between the board's colors and the jumper runs. 
+Note too, that many of the connections between the "Blue Pill" and the display are "bus" like runs. So its possible to peal off a ribbon of jumpers, and connect them as a group between the "Blue-Pill" and the display.
+
+Now With the display connections in place, load the "Blue Pill TFTClock" sketch. Find it in the github's "ARDUINO" folder.
+
+To move files from Github, to where they can be used on your computer. 
+Find the Github hyper link in the video description. Click it, or copy it to your browser to take you the repository, 
+Now, at the Github web-page, find and click the "clone or download" button, and then click the "Download zip" option. 
+The download process will start, and after few seconds, or minutes, depending on your network, 
+a "zipped" copy of this repository will be in your "DownLoads" folder. 
+Now, we come to a critical step. Find the folder that has the sketch name "BluePillTFTClock".
+and copy/extract this folder to your computer's "Adruino" folder.
+Assuming the IDE, has been installed with default settings, in Windows this "ARDUINO" folder will be located inside your "Documents" folder, and for Linux users it's inside your "Home" folder. 
+  
+The "Blue Pill TFTClock" sketch is a modified "example" sketch. Running it will confrim your display connections, and give driver info, that you'll need later, to setup the CW decoder sketch.  
+
+Before the clock sketch can be compiled, we need to add two libraries to the IDE .
+They are the "ADAFRUIT_GFX" library, and the "MCUFriend_Kbv". 
+If you've not already installed them, Then, in the IDE, use the "Tools">"Manage Libraries..." menu option (Ctl+SHft+I) to open the "Library Manager".
+The "Library Manager" is structured much like the "Board manager", so you'll navigate and select these libraries in much the same way as we did selecting the board.
+In the "Search Filter" box, type "ADAFRUIT_GFX" or  "MCUFriend_Kbv". And when the respective library appears, in the pick list, click on the entry's "install" button.
+If needed, there's a more detailed explanation of this process at the "learn.adafruit" link found in the video description.
+Once both libraries have been installed, you're ready to compile, and load this example sketch.
+And here's what you should see.
+
+Take note of the "ID" value reported. Particularly if its not "0x9486". Because, if it isn't, you'll need to modify the the decoder sketch's ID value, to match what you actually have.
+Now "power-down" the STM32, and install the remaining 6 jumpers needed to connect the STM32 to the LED, and microphone board.
+To help with connecting the LED, there's a photo of it in the Github's "documents" folder.  
+like I did on the “BluePill” side of the ST-link jumpers, I "super-glued" these socket connectors.  
+So that the LED and mic board can be "plugged" and "un-plugged" as single connections.
+And finally, install the last connection needed from pin A8 to A9. 
+
+Once satisfied that all components are properly interconnected, move on to loading the decoder sketch.
+
+Like you did the clock sketch, move the decoder sketch to your computer's Arduino folder.
+Sharp eyed builders will notice this time we're moving more than a folder with a single file. This is because the decoder program uses libraries that are unique to the hardware and wiring combination we have here.
+
+Open the sketch in the Aduino's IDE by using the "File>Open" menu option, and find its folder in the listing, double click the folder, select the sketch's ".ino" file and then open this sketch, by clicking the "open" button, or by double clicking the file.  
+
+With the sketch open, and if earlier you got an "ID" other than "9486"  find the line "ID =" (which, at the time of this video, was line 1096) and change it to match the value found with the Clock sketch.
+Now you can compile and load the sketch. When the process completes, the display will be transformed from a clock to a CW Decoder. And because its "open source", feel free to modify it to
+ better suit your needs.
+Vendors:
+Female to female 10 cm jumpers 40 @ $1.21; https://www.ebay.com/itm/40-2-54mm-10-20-30cm-M-M-M-F-F-F-Dupont-Wire-Jumper-Cable-for-Arduino-Breadboard/132422049342?ssPageName=STRK%3AMEBIDX%3AIT&var=431764835724&_trksid=p2060353.m2749.l2649
+
+STM32F103C8T6 (AKA Blue Pill)   1 @ $1.98 (+$0.68 shippng); https://www.ebay.com/itm/STM32F103C8T6-ARM-STM32-Minimum-System-Development-Board-Module-For-Arduino-NEW/223585760908?ssPageName=STRK%3AMEBIDX%3AIT&_trksid=p2060353.m2749.l2649
+
+ST-Link V2 Programming Unit 1 @ $2.35 (+$0.68 shippng); https://www.ebay.com/itm/ST-Link-V2-Programming-Unit-mini-STM8-STM32-Emulator-Downloader/381374717427?ssPageName=STRK%3AMEBIDX%3AIT&_trksid=p2060353.m2749.l2649
+
+APA106 F8 IC Integrate Round RGB 2 @ $1.29; https://www.ebay.com/itm/APA106-F5-F8-IC-Integrate-Round-RGB-Lamp-LED-String-controller-5V-like-WS2812B/291847691353?hash=item43f37a5c59:m:mp_hW78sOGXd_4RraqCbhyw
+
+3.5" inch TFT LCD Touch Screen Display Module 480X320 for Arduino Mega 2560 HQ 1 @ $9.03 (+$2.99 shippng);
+
+GY-MAX4466 electret microphone amplifier @ 1.52; https://www.ebay.com/itm/1pc-GY-MAX4466-electret-microphone-amplifier-MAX4466-adjustable-amplifier-module/183696382813?epid=22004091573&hash=item2ac5285b5d:g:K0wAAOSw~gZcbmaa
+
+https://github.com/jmharvey1/STM32_CWDecoder
+
+follow the instructions for adding libraries found here:
+    https://learn.adafruit.com/adafruit-gfx-graphics-library/overview    
+
+to configure the arduino to support stm32 boards follow the instructions found here:
+https://github.com/stm32duino/wiki/wiki/Getting-Started
+
+For LINUX users:
+to enable the ADRUINO IDE to program STM32 boards via ST-LINK V2 dongle,
+install the "49-stlinkv2.rules" file in your etc/udev/rules.d folder.
