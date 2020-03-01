@@ -9,16 +9,17 @@
          https://github.com/adafruit/Touch-Screen-Library
 */
 char RevDate[9] = "20200222";
-// MCU Friend TFT Display to STM32F (Blue Pill) pin connections
-//LCD pins  |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD |WR |RS |CS |RST|
-//STM32 pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0|PB6|PB7|PB8|PB9|
+// MCU Friend TFT Display to STM32F pin connections
+//LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
+//Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
+//Maple Mini pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB10|PB6|PB7|PB5|PB11| |PA15 |PB5  |PB4  |PB3   | //Mini Mapl
 
-//#include <TouchScreen.h>
 #include "TouchScreen_kbv.h" //hacked version by david prentice
 
 #include <Adafruit_GFX.h>
 #include <gfxfont.h>
-#include <MCUFRIEND_kbv.h>
+//#include <MCUFRIEND_kbv.h>
+#include "MCUFRIEND_kbv.h"
 MCUFRIEND_kbv tft;
 /*
   Rev: 2020-01-27
@@ -161,7 +162,15 @@ const int TS_LEFT=939,TS_RT=97,TS_TOP=891,TS_BOT=121; //values found using "Touc
     Maple core:  use Touchscreen_kbv library
     STM Core:    regular Touchscreen libraries should be ok.
 */
-const int XP = PB6, YP = PA6, XM = PA7, YM = PB7;
+#if defined(ARDUINO_MAPLE_MINI)
+#define XP PB5
+#define YM PB6
+#else
+#define XP PB6
+#define YM PB7
+#endif
+//const int XP = PB6, YP = PA6, XM = PA7, YM = PB7;
+const int YP = PA6, XM = PA7;
 TouchScreen_kbv ts(XP, YP, XM, YM, 300);
 TSPoint_kbv tp; //global point
 int tchcnt = 25;//initial block Display touch screen Scan loop cnt; actual loop cnt is set in the sketch

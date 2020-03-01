@@ -11,12 +11,18 @@
 
 #include <Adafruit_GFX.h>
 //#include <gfxfont.h>
-#include <MCUFRIEND_kbv.h>
-// MCU Friend TFT Display to STM32F (Blue Pill) pin connections
-//LCD pins  |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD |WR |RS |CS |RST|
-//STM32 pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0|PB6|PB7|PB8|PB9|
+//#include <MCUFRIEND_kbv.h>
+#include "MCUFRIEND_kbv.h"
+// MCU Friend TFT Display to STM32F pin connections
+//LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
+//Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
+//Maple Mini pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB10|PB6|PB7|PB5|PB11| |PA15 |PB5  |PB4  |PB3   | //Mini Mapl
 
-#define LED_BUILTIN PC13
+#if defined(ARDUINO_MAPLE_MINI)
+#define LED_BUILTIN PB1   //Maple Mini
+#else
+#define LED_BUILTIN PC13  //Blue Pill Pin
+#endif
 #define TIC_RATE 1000000    // in microseconds; should give 1.0Hz toggles
 MCUFRIEND_kbv tft;
 
