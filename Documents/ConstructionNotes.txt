@@ -2,7 +2,9 @@ This project can use either the "Blue Pill" or the "Maple- Mini" board
 The "Maple Mini" is NOT described in the video. But other than having a different connection diagram, the "Build" 
 process is essentialy the same. 
 (Note: The Maple Mini does NOT need the "STlink V2" dongle to load compiled sketches. Like most ARDUINO boards, 
-it uses the board's USB port) 
+it uses the board's USB port. Go here:
+		https://github.com/rogerclarkmelbourne/Arduino_STM32/wiki/Installation
+for instructions needed to enable your computer to work with the Maple Mini) 
  
 
 For Hardware you'll need:

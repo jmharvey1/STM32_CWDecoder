@@ -8,7 +8,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200222";
+char RevDate[9] = "20200301";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -66,7 +66,11 @@ MCUFRIEND_kbv tft;
 
 // Timer2 interrupt stuff
 #define SAMPL_RATE 94    // in microseconds; should give an interrupt rate of 10,526Hz (95)
-#define LED_BUILTIN PC13
+#if defined(ARDUINO_MAPLE_MINI)
+#define LED_BUILTIN PB1   //Maple Mini
+#else
+#define LED_BUILTIN PC13  //Blue Pill Pin
+#endif
 bool TonPltFlg =  true;// false;//used to control Arduino plotting (via) the USB serial port; To enable, don't modify here, but modify in the sketch
 bool Test = false;//  true;//  //Controls Serial port printing in the decode character process; To Enable/Disable, modify here
 /*
