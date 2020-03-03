@@ -20,8 +20,10 @@
 
 #if defined(ARDUINO_MAPLE_MINI)
 #define LED_BUILTIN PB1   //Maple Mini
+#define MicPin PB0
 #else
 #define LED_BUILTIN PC13  //Blue Pill Pin
+#define MicPin PB1
 #endif
 #define TIC_RATE 1000000    // in microseconds; should give 1.0Hz toggles
 MCUFRIEND_kbv tft;
@@ -60,6 +62,7 @@ void setup(void) {
   //  ID = 0x9341;// MCUfriends.com 2.8" Display id; (White Letters on Black Screen)
   //  ID = 0x6814;// MCUfriends.com 3.5" Display id
   //  ID = 0x9090;//MCUfriends.com 3.5" Display id (Black Letters on White Screen)
+  //if(ID == 0x9090) ID = 0x9341; //do this to keep the correct color scheme
   tft.begin(ID);//  The value here is screen specific & depends on the chipset used to drive the screen,
   tft.setRotation(2);
   
@@ -140,7 +143,7 @@ void loop() {
   Serial.print("Program Running"); 
   while(1){
     delay(20);
-    int k = analogRead(PB1);    // read the ADC value from pin PB1; (k = 0 to 4096)
+    int k = analogRead(MicPin);    // read the ADC value from pin PB1; (k = 0 to 4096)
     AvgBias = ((99* AvgBias) +k)/100;
   }
 }

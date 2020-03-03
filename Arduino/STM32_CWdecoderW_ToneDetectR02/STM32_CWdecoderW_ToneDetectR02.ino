@@ -58,7 +58,7 @@ MCUFRIEND_kbv tft;
    In its current form, this sketch is setup to caputure Audio tones @ ~750Hz.
    If a another freq is perferred, change the value assigned to the "TARGET_FREQUENCYC" variable.
 */
-
+#define BIAS 2000  //BluePill 1987 MapleMine 2000
 //#define DataOutPin PB5 //Sound process (Tone Detector) output pin; i.e. Key signal
 #define DataOutPin PA9 //Sound process (Tone Detector) output pin; i.e. Key signal
 // #define SlowData 6 // Manually Ground this Digital pin when when the incoming CW transmission is >30WPM
@@ -66,10 +66,13 @@ MCUFRIEND_kbv tft;
 
 // Timer2 interrupt stuff
 #define SAMPL_RATE 94    // in microseconds; should give an interrupt rate of 10,526Hz (95)
+
 #if defined(ARDUINO_MAPLE_MINI)
 #define LED_BUILTIN PB1   //Maple Mini
+#define MicPin PB0
 #else
 #define LED_BUILTIN PC13  //Blue Pill Pin
+#define MicPin PB1
 #endif
 bool TonPltFlg =  true;// false;//used to control Arduino plotting (via) the USB serial port; To enable, don't modify here, but modify in the sketch
 bool Test = false;//  true;//  //Controls Serial port printing in the decode character process; To Enable/Disable, modify here
@@ -893,8 +896,8 @@ void Timer_ISR(void) {
   if(BlkIntrpt)return;
   if (CurCnt <= NL) {//if true; collect a sound data point
     //digitalWrite(DataOutPin, HIGH); //for timing/tuning tests only
-    int k = analogRead(PB1);    // read the ADC value from pin PB1; (k = 0 to 4096)
-    k -= 1987; // form into a signed int
+    int k = analogRead(MicPin);    // read the ADC value from pin PB1; (k = 0 to 4096)
+    k -= BIAS; // form into a signed int
 //    if (k > 2000 | k < -2000) {
 //      k = kOld; //bad data point zero it out
 //      OvrLd = true;
@@ -1093,7 +1096,7 @@ void setup() {
   //setup Digital signal output pin
   pinMode(DataOutPin, OUTPUT);
   digitalWrite(DataOutPin, HIGH);
-  pinMode(PB1, INPUT);
+  pinMode(MicPin, INPUT);
   Serial.begin(115200); // use the serial port
   strip.begin();
 
@@ -1115,7 +1118,7 @@ void setup() {
   //  ID = 0x9090;//MCUfriends.com 3.5" Display id (Black Letters on White Screen)
   //  ID = 0x4747;//MCUfriends.com 2.8" Display id
   tft.begin(ID);//  The value here is screen specific & depends on the chipset used to drive the screen,
-  tft.setRotation(1);
+  tft.setRotation(1); // valid values 1 or 3
   tft.fillScreen(BLACK);
   scrnHeight = tft.height();
   scrnWidth = tft.width();
@@ -1178,8 +1181,12 @@ void loop()
   } else tp = {0, 0, 0};
   //if(!ScrnPrssd & btnPrsdCnt > 0) btnPrsdCnt = 0;  
   if (tp.z > 200) { // if (tp.z > MINPRESSURE && tp.z < MAXPRESSURE) { //
+    //use the following for Screen orientation set to 1
     py = map(tp.y, TS_TOP, TS_BOT, 0, scrnHeight);
     px = map(tp.x, TS_LEFT, TS_RT, 0, scrnWidth);
+    //use the following for Screen orientation set to 3
+//    py = map(tp.y, TS_BOT, TS_TOP, 0, scrnHeight);
+//    px = map(tp.x, TS_RT, TS_LEFT, 0, scrnWidth);
 //    Serial.print("tp.z = "); Serial.print(tp.z);
 //    Serial.print("\t; px: "); Serial.print(px);
 //    Serial.print("\t; py: "); Serial.println(py);
