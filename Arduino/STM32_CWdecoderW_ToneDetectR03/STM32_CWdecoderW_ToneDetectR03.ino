@@ -1,4 +1,4 @@
-
+/* Rev: 20220-03-04 Same code as STM32_CWDecoderW_ToneDetectR02 but Changes to Squelch code to track noise floor to better capture tone signals being depressed by RCVR AGC changes 
 /* Rev: 2020-02-22 Adjusted values to work with GY-MAX4466 Mic Board
 /* Rev: 2020-01-29 1st attempt at porting Sketch to STM32 'Blue Pill' board*/
 /*
@@ -8,7 +8,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200301";
+char RevDate[9] = "20200306";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -272,6 +272,7 @@ bool dataRdy = LOW;
 
 volatile long period = 0;
 volatile unsigned long start = 0;
+volatile unsigned long Oldstart = 0;
 volatile unsigned long thisWordBrk = 0;
 //volatile long Oldstart=0;//JMH 20190620
 volatile unsigned long noSigStrt;
@@ -299,6 +300,7 @@ volatile unsigned long avgDeadSpace = avgDit;
 volatile int space = 0;
 unsigned long lastDah = avgDah;
 volatile unsigned long letterBrk = 0; //letterBrk =avgDit;
+volatile unsigned long OldltrBrk = 0;
 unsigned long AvgLtrBrk = 0;
 volatile unsigned long ltrBrk = 0;
 int shwltrBrk = 0;
@@ -658,10 +660,12 @@ void KeyEvntSR() {
   SetLtrBrk();
   chkChrCmplt();
   if (digitalRead(interruptPin) == LOW) { //key-down
+    Oldstart = start;
     start = millis();
     //start = micros();
     //unsigned long deadSpace = start-noSigStrt;
     deadSpace = start - noSigStrt;
+    OldltrBrk = letterBrk;
     letterBrk = 0;
     ltrCmplt = -1800; // used in plot mode, to show where/when letter breaks are detected 
     CalcAvgdeadSpace = true;
@@ -695,9 +699,17 @@ void KeyEvntSR() {
   }
   else { // "Key Up" evaluations;
     if (DeCodeVal != 0) {//Normally true; We're working with a valid symbol set. Reset timers
+      unsigned long OldNoStrt = noSigStrt;
       noSigStrt =  millis();
       //noSigStrt =  micros();
       period = noSigStrt - start;
+      if(2*period<avgDit){ //seems to be a glitch
+        avgDit= (5*avgDit +period)/6; //go ahead & factor this period in, just incase we are now listening to a faster WPM stream
+        noSigStrt = OldNoStrt;
+        start = Oldstart;
+        letterBrk = OldltrBrk;
+        return;// abort processing this event 
+      }
       WrdStrt = noSigStrt;
       TimeDat[Bitpos] = period;
       Bitpos += 1;
@@ -915,9 +927,14 @@ void Timer_ISR(void) {
   mag = sqrt(GetMagnitudeSquared(Q1C, Q2C, coeffC));
   bool GudTone = true;
   if (mag < 2000) GudTone = false; //JMH20200128
-  //float CurNoise = ((CurNoise) + ((0.8 * AvgVal) - mag)) / 2;
-  //float CurNoise = ((CurNoise) + ((1.6*AvgVal) - mag)) / 2;
-  float CurNoise = ((CurNoise) + ((1.2*AvgVal) - mag)) / 2;
+//  float CurNoise = ((CurNoise) + ((1.2*AvgVal) - mag)) / 2;
+  //float CurNoise = ((CurNoise) + ((1.2*AvgVal) - (1.4*mag))) / 2;
+  //float CurNoise = ((CurNoise) + 1.6*((AvgVal) - (1.66*mag))) / 2;
+  //float CurNoise = ((CurNoise) + 1.6*((AvgVal) - (1.2*mag))) / 2;
+  //float CurNoise = ((CurNoise) + 2.3*((AvgVal) - (1.2*mag))) / 2;
+  //float CurNoise = ((CurNoise) + 2.3*((AvgVal) - (1.4*mag))) / 2;
+  //float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (1.4*mag))) / 2;
+   float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (1.2*mag))) / 2;
   ToneLvl = mag;
   //noise = ((6 * noise) + (CurNoise)) / 7; // calculate the running average of the unfiltered digitized Sound
   noise = ((4 * noise) + (CurNoise)) / 5; // calculate the running average of the unfiltered digitized Sound
@@ -931,7 +948,7 @@ void Timer_ISR(void) {
     }
   }
   SqlchVal = noise;
-  if ((ToneLvl < CurNoise) & (CurNoise > SqlchVal))  SqlchVal = CurNoise; //could be a static burst
+//  if ((ToneLvl < CurNoise) & (CurNoise > SqlchVal))  SqlchVal = CurNoise; //could be a static burst
   if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
   if ( ToneLvl > SqlchVal) {
     magC = (14 * magC + mag) / 15;
@@ -957,32 +974,14 @@ void Timer_ISR(void) {
     //    Serial.print("\t");
     Serial.print(noise);//Purple
     Serial.print("\t");
-    Serial.print(AvgToneSqlch);//Gray
+    Serial.print(SqlchVal);//Gray//Serial.print(AvgToneSqlch);//Gray   
     Serial.print("\t");
   }
   if (( ToneLvl > SqlchVal)) {
+  //if (( ToneLvl > noise)) {  
     toneDetect = true; 
   } else toneDetect = false;
 
-//  if (armHi && ( ToneLvl > SqlchVal)) {
-//    toneDetect = true; //Had the same Tonestate 2X in a row. So go with it
-//  }
-//  if (armLo && ( ToneLvl < SqlchVal)) {
-//    toneDetect = false; //Had the same Tonestate 2X in a row. So go with it
-//    //TnLpCnt = 0;
-//  }
-//  if (!armHi && ( ToneLvl > SqlchVal)) { //+50
-//    armHi = true;
-//    armLo = false;
-//    //toneDetect = true;
-//  }
-//  if (!armLo && ( ToneLvl < SqlchVal)) { //+50
-//    armHi = false;
-//    armLo = true;
-//    //toneDetect = false;
-//    ToneOnCnt = 0;
-//    //TnLpCnt = 0;
-//  }
   loopcnt -= 1;
   if (loopcnt < 0) {
     NoiseAvgLvl = (30 * NoiseAvgLvl + (noise)) / 31; //every 3rd pass thru, recalculate running average of the composite noise signal
@@ -1347,8 +1346,8 @@ void SetLtrBrk(void)
   }
   
   if(wpm<35){
-    ltrBrk =  int(1.6*(float(space))); //int(1.7*(float(space))); //int(1.5*(float(space))); // Basic letter break interval //20200220 changed to 1.6 becuase was getting "L" when it should hve read "ED"
-    //ltrBrk = avgDeadSpace + ((AvgLtrBrk - avgDeadSpace) / 2.0);
+    //ltrBrk =  int(1.6*(float(space))); //int(1.7*(float(space))); //int(1.5*(float(space))); // Basic letter break interval //20200220 changed to 1.6 because was getting "L" when it should hve read "ED"
+    ltrBrk =  int(1.5*(float(space)));// 20200306 went from 1.6 back to 1.5 to reduce the chance of having to deal with multi letter symbol groups 
     if (BugMode) { //use special case spacing
       if (((DeCodeVal & 1) == 1) && (DeCodeVal > 3)) { //this dead space interval appears to be an mid-character event AND the last symbol detected was a "DAH".
         ltrBrk = int(2.5*(float(space)));//int(1.8*(float(space)));
@@ -1373,7 +1372,7 @@ void SetLtrBrk(void)
   }
 
   letterBrk = ltrBrk + noSigStrt; //set the next letter break "time stamp"
-  if (BugMode) letterBrk = letterBrk + 0.8 * avgDit ;
+  //if (BugMode) letterBrk = letterBrk + 0.8 * avgDit ;//20200306 removed to reduce having to deal with multi letter sysmbols
   if (NuWrd && NuWrdflg) {
     NuWrd = false;
     NuWrdflg = false;
