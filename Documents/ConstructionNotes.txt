@@ -1,10 +1,15 @@
 This project can use either the "Blue Pill" or the "Maple- Mini" board
 The "Maple Mini" is NOT described in the video. But other than having a different connection diagram, the "Build" 
 process is essentialy the same. 
-(Note: The Maple Mini does NOT need the "STlink V2" dongle to load compiled sketches. Like most ARDUINO boards, 
-it uses the board's USB port. Go here:
+Note 1: The "Maple Mini" sketch now supports 2 user settings (the Blue Pill sketch does not).
+            1. Tone Detect Ferquency (500 to 900 Hz)
+            2. LED "Brightness" (1.00 to 0.05)
+        (The user setup is accessed by a "long press" on the touch screen's "Clear" Button)
+ 
+Note 2: The Maple Mini does NOT use the "STlink V2" dongle to load compiled sketches. Like most ARDUINO boards, 
+        it uses the board's USB port. Go here:
 		https://github.com/rogerclarkmelbourne/Arduino_STM32/wiki/Installation
-for instructions needed to enable your computer to work with the Maple Mini) 
+        for instructions needed to enable your computer to work with the Maple Mini 
  
 
 For Hardware you'll need:

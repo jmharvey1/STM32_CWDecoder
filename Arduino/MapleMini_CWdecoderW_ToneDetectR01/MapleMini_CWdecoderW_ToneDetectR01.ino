@@ -1,6 +1,7 @@
+/* Rev: 20220-07-17 Added calls to EEPROM library, to store and retrieve user settings (tone decode frequency) 
 /* Rev: 20220-06-18 main change added support for small(320X240) and large(480X320) screens
 /* Rev: 20220-03-04 Same code as STM32_CWDecoderW_ToneDetectR02 but Changes to Squelch code to track noise floor to better capture tone signals being depressed by RCVR AGC changes 
-/* Rev: 2020-02-22 Adjusted values to work with GY-MAX4466 Mic Board
+/* Rev: 2020-02-22 Adjusted values to work with GY-MAX4466 Mic BoardDimFctr
 /* Rev: 2020-01-29 1st attempt at porting Sketch to STM32 'Blue Pill' board*/
 /*
      The TFTLCD library comes from here:  https://github.com/prenticedavid/MCUFRIEND_kbv
@@ -9,14 +10,14 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200619";
+char RevDate[9] = "20200717";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
 //Maple Mini pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB10|PB6|PB7|PB5|PB11| |PA15 |PB5  |PB4  |PB3   | //Mini Mapl
 
+#include "EEPROM.h"  //support storage & retrieval of user declared settings
 #include "TouchScreen_kbv.h" //hacked version by david prentice
-
 #include <Adafruit_GFX.h>
 #include <gfxfont.h>
 //#include <MCUFRIEND_kbv.h>
@@ -75,18 +76,26 @@ MCUFRIEND_kbv tft;
 #define LED_BUILTIN PC13  //Blue Pill Pin
 #define MicPin PB1
 #endif
-bool TonPltFlg =  true;// false;//used to control Arduino plotting (via) the USB serial port; To enable, don't modify here, but modify in the sketch
+bool TonPltFlg = true;// false;//used to control Arduino plotting (via) the USB serial port; To enable, don't modify here, but modify in the sketch
 bool Test = false;//  true;//  //Controls Serial port printing in the decode character process; To Enable/Disable, modify here
 /*
    Goertzel stuff
 */
 #define FLOATING float
 
-#define TARGET_FREQUENCYC  749.5 //Hz
-#define TARGET_FREQUENCYL  734.0 //Hz
-#define TARGET_FREQUENCYH  766.0 //Hz
+//#define TARGET_FREQUENCYC  749.5 //Hz
+//#define TARGET_FREQUENCYL  734.0 //Hz
+//#define TARGET_FREQUENCYH  766.0 //Hz
+float TARGET_FREQUENCYC = 749.5; //Hz
+float TARGET_FREQUENCYL = 734.0; //Hz
+float TARGET_FREQUENCYH = 766.0; //Hz
+float feqlratio = 0.979319546;
+float feqhratio = 1.022014676;
+
 #define CYCLE_CNT 6.0 // Number of Cycles to Sample per loop
+float StrdFREQUENCY;// = float(ReadMemory(EEaddress));
 float SAMPLING_RATE = 10850.0;// 10750.0;// 10520.0;//10126.5 ;//10520.0;//21900.0;//22000.0;//22800.0;//21750.0;//21990.0;
+uint16 EEaddress = 0x10; // Start 2 words up from the base EEPROM page address (See EEPROM.H file for more detail)
 int CurCnt = 0;
 float AvgVal = 0.0;
 bool OvrLd = false;
@@ -115,6 +124,7 @@ float magC = 0;
 float magC2 = 0;
 float magL = 0;
 float magH = 0;
+float DimFctr = 1.00; // LED brightnes Scale factor
 int kOld = 0;
 // End Goertzel stuff
 
@@ -278,6 +288,8 @@ bool CalcDitFlg = false;
 bool LtrBrkFlg = true;
 bool NuWrd = true;
 bool NuWrdflg = false;
+bool SetRtnflg = false;
+int unsigned ClrBtnCnt = 0; 
 int unsigned ModeCnt = 0; // used to cycle thru the 3 decode modes (norm, bug, bug2)
 int unsigned ModeCntRef = 0;
 //char TxtMsg1[] = {"1 2 3 4 5 6 7 8 9 10 11\n"};
@@ -675,6 +687,26 @@ char DicTbl2[ARSIZE2][5]={
 // End of CW Decoder Global Variables
 
 ////////////////////////////////////////////////////////////////////
+// Special handler functions to store and retieve non-volital user data
+template <class T> int EEPROM_write(uint ee, const T& value)
+{
+   const byte* p = (const byte*)(const void*)&value;
+   int i;
+   for (i = 0; i < sizeof(value); i++)
+       EEPROM.write(ee++, *p++);
+   return i;
+}
+
+template <class T> int EEPROM_read(int ee, T& value)
+{
+   byte* p = (byte*)(void*)&value;
+   int i;
+   for (i = 0; i < sizeof(value); i++)
+       *p++ = EEPROM.read(ee++);
+   return i;
+}
+////////////////////////////////////////////////////////////////////
+
 
 // Install the interrupt routine.
 void KeyEvntSR() {
@@ -1103,6 +1135,9 @@ void Timer_ISR(void) {
 
 //    strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE)); // set color of ASD 1293 LED to Green
   }
+  LEDGREEN = (byte)(DimFctr*((float)LEDGREEN));
+  LEDRED = (byte)(DimFctr*((float)LEDRED));
+  LEDBLUE = (byte)(DimFctr*((float)LEDBLUE));
   strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE));
   strip.show(); //activate the RGB LED
   // this round of sound processing is complete, so setup to start to collect the next set of samples
@@ -1120,7 +1155,18 @@ void setup() {
   pinMode(MicPin, INPUT);
   Serial.begin(115200); // use the serial port
   strip.begin();
-
+  int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
+  if(StrdFREQUENCY !=0 && n == 4){
+    TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
+    TARGET_FREQUENCYL = feqlratio*StrdFREQUENCY; //Hz
+    TARGET_FREQUENCYH = feqhratio*StrdFREQUENCY; //Hz
+  }
+  float StrdDimFctr = 0;
+  n = EEPROM_read(EEaddress+4, StrdDimFctr);
+  if(StrdDimFctr > 0 && n == 4){
+    DimFctr = StrdDimFctr;
+  }
+  
   InitGoertzel();
   coeff = coeffC;
   N = NC;
@@ -1215,7 +1261,7 @@ void loop()
     avgDit = (5 * avgDit + lastDit) / 6;
     curRatio = (float)avgDah / (float)avgDit;
   }
-  tchcnt -=1;
+  tchcnt -=1; //decrement "techcnt" by 1
   if(tchcnt==0){
     readResistiveTouch();
   } else tp = {0, 0, 0};
@@ -1264,32 +1310,42 @@ void loop()
 
     if (px > bxlo && px < bxhi && py > ylo && py < yhi && buttonEnabled) // The user has touched a point inside the Blue rectangle, & wants to clear the Display
     { //reset (clear) the Screen
-      buttonEnabled = false; //Disable button
-      //   Serial.print("Clear Screen");
-  //    if ( interruptPin == 2) KillINT();
-  //    else enableDisplay();
-      enableDisplay();
-      tft.fillScreen(BLACK);
-      DrawButton();
-      Button2();
-      WPMdefault();
-//      avgDit = 80; //average 'Dit' duration
-//      avgDeadSpace = avgDit;
-//      AvgLtrBrk = 3*avgDit;
-//      avgDah = 240;
-//      wpm = CalcWPM(avgDit);
-      px = 0;
-      py = 0;
-      showSpeed();
-      tft.setCursor(textSrtX, textSrtY);
-  //    if ( interruptPin == 2) enableINT();
-      for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
-        Pgbuf[i] = 0;
-      cnt = 0;
-      curRow = 0;
-      offset = 0;
-      cursorX = 0;
-      cursorY = 0;
+      SetRtnflg = false;
+      SftReset();
+//      buttonEnabled = false; //Disable button
+//      ClrBtnCnt = 0;
+//      //   Serial.print("Clear Screen");
+//  //    if ( interruptPin == 2) KillINT();
+//  //    else enableDisplay();
+//      enableDisplay();
+//      tft.fillScreen(BLACK);
+//      DrawButton();
+//      Button2();
+//      WPMdefault();
+////      avgDit = 80; //average 'Dit' duration
+////      avgDeadSpace = avgDit;
+////      AvgLtrBrk = 3*avgDit;
+////      avgDah = 240;
+////      wpm = CalcWPM(avgDit);
+//      px = 0;
+//      py = 0;
+//      showSpeed();
+//      tft.setCursor(textSrtX, textSrtY);
+//  //    if ( interruptPin == 2) enableINT();
+//      for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
+//        Pgbuf[i] = 0;
+//      cnt = 0;
+//      curRow = 0;
+//      offset = 0;
+//      cursorX = 0;
+//      cursorY = 0;
+    } else if (px > bxlo && px < bxhi && py > ylo && py < yhi && !buttonEnabled && !SetRtnflg) // The user has touched a point inside the Blue rectangle, but the screen has already been cleared.
+    // so need to test if user presses long engough to signal change to go to menu setup mode
+    {
+      ClrBtnCnt += 1;
+      if(ClrBtnCnt == 10000){ //the user has pressed the clear button long enough to go into "setup mode" 
+       setuploop(); 
+      }
     } else if (px > gxlo && px < gxhi && py > ylo && py < yhi && buttonEnabled) { //User has touched a point inside the Green Mode rectangle, & wants to change Mode (normal/bug1/bug2)
       px = 0; //kill button press
       py = 0; //kill button press
@@ -1309,7 +1365,319 @@ void loop()
   SetModFlgs(ModeCnt);//if(ModeCntRef != ModeCnt) ModeCnt= ModeCntRef; //added this in an attempt to fix mysterious loss of value in ModeCnt
 
 }//end of Main Loop
+//////////////////////////////////////////////////////////////////////////
 
+void setuploop(){
+  bool setupflg = true;
+  bool saveflg = false;
+  buttonEnabled = true;
+  int loopcnt = 100;
+  int LEDLpcnt = 100;
+  float StrdDimFctr = 0;
+  //Exit Button position parameters
+  int ExitX = 130;
+  int ExitWdth = 80;
+  int ExitHght = 40;
+  int ExitY = scrnHeight - (ExitHght + 5);//195;
+  if (scrnWidth == 480){
+    ExitX = ExitX + 32;
+//    SaveX = SaveX + 32;
+  }
+    //Save Button parameters
+  int SaveX = ExitX +ExitWdth +1;
+  int SaveWdth = ExitWdth;
+  int SaveY = ExitY;
+  int SaveHght = ExitHght;
+
+  //IncFreq Button parameters
+  int IncFrqX = SaveX+SaveWdth+1;
+  int IncFrqWdth = 80;
+  int IncFrqHght = 40;
+  int IncFrqY = scrnHeight - (ExitHght+IncFrqHght + 5);
+
+  //DecFreq Button parameters
+  int DecFrqX =  ExitX-(80+1);
+  int DecFrqWdth = 80;
+  int DecFrqHght = 40;
+  int DecFrqY = scrnHeight - (ExitHght+DecFrqHght + 5);
+
+//IncLED Button parameters
+  int IncLEDX = IncFrqX+IncFrqWdth+1;
+  int IncLEDWdth = 80;
+  int IncLEDHght = 40;
+  int IncLEDY = IncFrqY-IncLEDHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
+
+  //DecLED Button parameters
+  int DecLEDX = ExitX-((2*80)+1);
+  int DecLEDWdth = 80;
+  int DecLEDHght = 40;
+  int DecLEDY = IncFrqY-DecLEDHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+  
+  py = 0;
+  px = 0;
+  tchcnt = 100;
+  enableDisplay();
+  tft.fillScreen(BLACK);
+  //ExitBtn();
+  DrawBtn(ExitX, ExitWdth, ExitY, ExitHght, "Exit", YELLOW, WHITE);
+  //Draw SaveBtn
+  DrawBtn(SaveX, SaveWdth, SaveY, SaveHght, "Save", GREEN, WHITE);
+  //Frequency Buttons
+  DrawBtn(IncFrqX, IncFrqWdth, IncFrqY, IncFrqHght, "Freq+", BLUE, WHITE);
+  DrawBtn(DecFrqX, DecFrqWdth, DecFrqY, DecFrqHght, "Freq-", BLUE, WHITE);
+  //LED brigthnes Buttons
+  DrawBtn(IncLEDX, IncLEDWdth, IncLEDY, IncLEDHght, "LED +", BLUE, WHITE);
+  DrawBtn(DecLEDX, DecLEDWdth, DecLEDY, DecLEDHght, "LED -", BLUE, WHITE);
+  
+  ShwUsrParams();  
+//  int ToneCfreq = int(TARGET_FREQUENCYC);
+//  int ToneDeci = int(10*(TARGET_FREQUENCYC-ToneCfreq));
+//  int DimFctrInt = int(DimFctr);
+//  int DimFctrDeci = int(100*(DimFctr-DimFctrInt));
+//  //Serial.print("TARGET_FREQUENCYC: "); //Serial.println(TARGET_FREQUENCYC);
+//  sprintf( Title, "Center Freq: %d.%d Hz; DimFctr:%d.%d", ToneCfreq, ToneDeci, DimFctrInt, DimFctrDeci );
+//  dispMsg(Title);
+  //Serial.print("DimFctr: "); Serial.println(DimFctr);
+  delay(1000);
+  while(setupflg){ // run inside this loop until user exits setup mode
+    //Serial.print("tchcnt: "); Serial.println(tchcnt);
+    tchcnt -=1; //decrement "techcnt" by 1
+    if(tchcnt==0){
+      readResistiveTouch();
+      tchcnt = 100;
+    } else{
+      //tp = {0, 0, 0};
+      py = 0;
+      px = 0;
+    }
+    //if(!ScrnPrssd & btnPrsdCnt > 0) btnPrsdCnt = 0;  
+    if (tp.z > 200) { // if (tp.z > MINPRESSURE && tp.z < MAXPRESSURE) { //
+      //use the following for Screen orientation set to 1
+      py = map(tp.y, TS_BOT, TS_TOP, 0, scrnHeight);
+      px = map(tp.x, TS_LEFT, TS_RT, 0, scrnWidth);
+//      Serial.print("tp.z = "); Serial.println(tp.z); 
+//      Serial.print("px: "); Serial.print(px); Serial.print("; SaveX: "); Serial.print(SaveX); Serial.print("; SaveX+SaveWdth: "); Serial.println(SaveX+SaveWdth);
+//      Serial.print("py: "); Serial.print(py); Serial.print("; SaveY: "); Serial.print(SaveY); Serial.print("; SaveY+ExitHght: "); Serial.print(SaveY+SaveHght);
+//      Serial.print("; scrnHeight: "); Serial.println(scrnHeight);
+//      Serial.println("\n\r \n\r");
+      
+    }
+    if ((px > IncFrqX && px < IncFrqX+IncFrqWdth) && (py > IncFrqY && py < IncFrqY+IncFrqHght)&& buttonEnabled){
+      //buttonEnabled = false;
+      // Inc Feq button was pressed
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 40000;
+        //CalcFrqParams(TARGET_FREQUENCYC + 10.0);
+        TARGET_FREQUENCYC += 10.0;
+        if(TARGET_FREQUENCYC > 901.0) TARGET_FREQUENCYC -= 10.0; 
+        CalcFrqParams(TARGET_FREQUENCYC);
+      }
+    }
+
+    if ((px > DecFrqX && px < DecFrqX+DecFrqWdth) && (py > DecFrqY && py < DecFrqY+DecFrqHght)&& buttonEnabled){
+      //buttonEnabled = false;
+      // Dec Feq button was pressed
+      //CalcFrqParams(TARGET_FREQUENCYC - 10.0);
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 40000;
+        TARGET_FREQUENCYC -= 10.0;
+        if(TARGET_FREQUENCYC < 499.0) TARGET_FREQUENCYC += 10.0; 
+        CalcFrqParams(TARGET_FREQUENCYC);
+      }
+    }
+
+    if ((px > IncLEDX && px < IncLEDX+IncLEDWdth) && (py > IncLEDY && py < IncLEDY+IncLEDHght)&& buttonEnabled){
+      // Increment LED button was pressed
+      //buttonEnabled = false;
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        DimFctr += 0.05;
+        if(DimFctr>1.0) DimFctr= 1.0; 
+        ShwUsrParams();
+      }
+      
+    }
+
+    if ((px > DecLEDX && px < DecLEDX+DecLEDWdth) && (py > DecLEDY && py < DecLEDY+DecLEDHght)&& buttonEnabled){
+      //buttonEnabled = false;
+      // Decrement LED button was pressed
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        DimFctr -= 0.05;
+        if(DimFctr<0.05) DimFctr= 0.05; 
+        ShwUsrParams();
+      }
+    }
+
+    
+    if ((px > ExitX && px < ExitX+ExitWdth) && (py > ExitY && py < ExitY+ExitHght)&& buttonEnabled){
+      buttonEnabled = false;
+      setupflg = false;// exit button was pressed
+    }
+    if ((px > SaveX && px < SaveX+SaveWdth) && (py > SaveY && py < SaveY+SaveHght)&& buttonEnabled){
+      buttonEnabled = false;
+      saveflg = true;
+      // Save button was pressed. So store current User params to virtual EEPROM (STM flash memory)
+      //Draw SaveBtn
+      DrawBtn(SaveX, SaveWdth, SaveY, SaveHght, "Save", BLACK, WHITE); // make "SAVE" button "BLACK" to confirm button press  
+      float NewToneFreq = TARGET_FREQUENCYC;
+      int n= EEPROM_write(EEaddress+0, NewToneFreq);
+      StrdDimFctr = DimFctr;
+      n = EEPROM_write(EEaddress+4, StrdDimFctr);
+      delay(250);
+      //Draw SaveBtn
+      DrawBtn(SaveX, SaveWdth, SaveY, SaveHght, "Save", GREEN, WHITE);
+    }
+    loopcnt -=1;
+    if (loopcnt == 0){
+      loopcnt = 80000;
+      cursorX = 0;
+      cursorY = 1 * (fontH + 10);
+      //tft.fillRect(cursorX, cursorY, scrnWidth, (fontH + 10), BLACK); //erase 2nd Row
+      char StatMsg[40];
+      int CFrqMag = (int)(mag/100);
+      sprintf( StatMsg, "Tone Mag: %d", CFrqMag );
+      //Serial.println(StatMsg);
+      int msgpntr = 0;
+      int cnt = 0;
+      int offset = 0;
+      tft.setCursor(cursorX, cursorY);
+      while ( StatMsg[msgpntr] != 0) {
+        tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK);
+        char curChar = StatMsg[msgpntr];
+        tft.print(curChar);
+        msgpntr++;
+        cnt++;
+        if (((cnt) - offset)*fontW >= displayW) {
+          curRow++;
+          cursorX = 0;
+          cursorY = curRow * (fontH + 10);
+          offset = cnt;
+          tft.setCursor(cursorX, cursorY);
+        }
+        else cursorX = (cnt - offset) * fontW;
+        tft.setCursor(cursorX, cursorY);
+      }
+      while (msgpntr<39) {
+        tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK);
+        msgpntr++;
+        cnt++;
+        cursorX = (cnt - offset) * fontW;
+      }
+    }// end if(loopcnt == 0)
+  }//End While Loop
+  int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
+  if(StrdFREQUENCY !=0 && n == 4){
+    TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
+    TARGET_FREQUENCYL = feqlratio*StrdFREQUENCY; //Hz
+    TARGET_FREQUENCYH = feqhratio*StrdFREQUENCY; //Hz
+    InitGoertzel();
+    coeff = coeffC;
+    N = NC;
+  }
+  StrdDimFctr = 0;
+  n = EEPROM_read(EEaddress+4, StrdDimFctr);
+  if(StrdDimFctr > 0 && n == 4){
+    DimFctr = StrdDimFctr;
+  }
+  SftReset();
+  SetRtnflg = true;
+  return;
+}//end of SetUp Loop
+
+//////////////////////////////////////////////////////////////////////////
+void CalcFrqParams(float NewToneFreq){
+  //float NewToneFreq = TARGET_FREQUENCYC + 10.0;
+  TARGET_FREQUENCYC = NewToneFreq; //Hz
+  TARGET_FREQUENCYL = feqlratio*NewToneFreq; //Hz
+  TARGET_FREQUENCYH = feqhratio*NewToneFreq; //Hz
+  InitGoertzel();
+  coeff = coeffC;
+  N = NC;
+  // now Display current freq
+  ShwUsrParams();
+//  int ToneCfreq = int(TARGET_FREQUENCYC);
+//  int ToneDeci = int(10*(TARGET_FREQUENCYC-ToneCfreq));
+//  int DimFctrInt = int(DimFctr);
+//  int DimFctrDeci = int(100*(DimFctr-DimFctrInt));
+//  //Serial.print("TARGET_FREQUENCYC: "); Serial.println(TARGET_FREQUENCYC);
+//  //sprintf( Title, "Current Center Freq: %d.%d Hz", ToneCfreq, ToneDeci );
+//  sprintf( Title, "Center Freq: %d.%d Hz; DimFctr:%d.%d", ToneCfreq, ToneDeci, DimFctrInt, DimFctrDeci );
+//  tft.setCursor(textSrtX, textSrtY);
+//  for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
+//    Pgbuf[i] = 0;
+//  cnt = 0;
+//  curRow = 0;
+//  offset = 0;
+//  cursorX = 0;
+//  cursorY = 0;
+//  tft.fillRect(cursorX, cursorY, scrnWidth, (1 * (fontH + 10)), BLACK); //erase top 2 rows
+//  dispMsg(Title);
+ 
+}
+//////////////////////////////////////////////////////////////////////////
+
+void ShwUsrParams()
+{
+  int ToneCfreq = int(TARGET_FREQUENCYC);
+  int ToneDeci = int(10*(TARGET_FREQUENCYC-ToneCfreq));
+  int DimFctrInt = int(DimFctr);
+  int DimFctrDeci = int(100*(DimFctr-DimFctrInt));
+  //Serial.print("TARGET_FREQUENCYC: "); Serial.println(TARGET_FREQUENCYC);
+  //sprintf( Title, "Current Center Freq: %d.%d Hz", ToneCfreq, ToneDeci );
+  sprintf( Title, "Center Freq: %d.%d Hz; DimFctr:%d.%d", ToneCfreq, ToneDeci, DimFctrInt, DimFctrDeci );
+  tft.setCursor(textSrtX, textSrtY);
+  for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
+    Pgbuf[i] = 0;
+  cnt = 0;
+  curRow = 0;
+  offset = 0;
+  cursorX = 0;
+  cursorY = 0;
+  tft.fillRect(cursorX, cursorY, scrnWidth, (1 * (fontH + 10)), BLACK); //erase top 2 rows
+  dispMsg(Title);
+  return;
+}
+//////////////////////////////////////////////////////////////////////////
+void DrawBtn(int Bposx, int Bwidth, int Bposy, int Bheight, const char* Captn, unsigned int BtnClr, unsigned int TxtClr){
+  //if (scrnHeight == 320) Bposy = scrnHeight - (Bheight + 5);
+  //if (scrnWidth == 480)  Bposx = Bposx + 32; //Bposx = Bposx +20;
+  tft.fillRect(Bposx, Bposy, Bwidth, Bheight, BtnClr);
+  tft.drawRect(Bposx, Bposy, Bwidth, Bheight, WHITE);
+  tft.setCursor(Bposx + 11, Bposy + 12);
+  tft.setTextColor(TxtClr);
+  tft.setTextSize(2);
+  tft.print(Captn);
+
+}
+
+///////////////////////////////////////////////////////////
+
+void  SftReset(){
+  buttonEnabled = false; //Disable button
+  ClrBtnCnt = 0;
+  enableDisplay();
+  tft.fillScreen(BLACK);
+  DrawButton();
+  Button2();
+  WPMdefault();
+  px = 0;
+  py = 0;
+  showSpeed();
+  tft.setCursor(textSrtX, textSrtY);
+  for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
+    Pgbuf[i] = 0;
+  cnt = 0;
+  curRow = 0;
+  offset = 0;
+  cursorX = 0;
+  cursorY = 0;
+  return;
+}
 //////////////////////////////////////////////////////////////////////////
 void WPMdefault()
 {
@@ -1602,7 +1970,7 @@ void DisplayChar(unsigned int decodeval) {
     if (curRow + 1 > row)scrollpg(); // its time to Scroll the Text up one line
   }
   //sprintf ( Msgbuf, "%s%c", Msgbuf, curChr );
-  dispMsg(Msgbuf); // print current character(s) to OLED display
+  dispMsg(Msgbuf); // print current character(s) to LCD display
   int avgntrvl = int(float(avgDit + avgDah) / 4);
   //wpm = CalcWPM(avgntrvl);//use all current time intervalls to extract a composite WPM
   wpm = CalcWPM(avgDit, avgDah, avgDeadSpace);
