@@ -1,7 +1,8 @@
-/* Rev: 20220-07-17 Added calls to EEPROM library, to store and retrieve user settings (tone decode frequency) 
-/* Rev: 20220-06-18 main change added support for small(320X240) and large(480X320) screens
-/* Rev: 20220-03-04 Same code as STM32_CWDecoderW_ToneDetectR02 but Changes to Squelch code to track noise floor to better capture tone signals being depressed by RCVR AGC changes 
-/* Rev: 2020-02-22 Adjusted values to work with GY-MAX4466 Mic BoardDimFctr
+/* Rev: 20220-08-02 Added additional calls to EEPROM library, to store/retrieve user settings  plus a reset option to return user settings to original sketch values*/
+/* Rev: 20220-07-22 Added calls to EEPROM library, to store and retrieve user settings (tone decode frequency)*/ 
+/* Rev: 20220-06-18 main change added support for small(320X240) and large(480X320) screens*/
+/* Rev: 20220-03-04 Same code as STM32_CWDecoderW_ToneDetectR02 but Changes to Squelch code to track noise floor to better capture tone signals being depressed by RCVR AGC changes */
+/* Rev: 2020-02-22 Adjusted values to work with GY-MAX4466 Mic Board*/
 /* Rev: 2020-01-29 1st attempt at porting Sketch to STM32 'Blue Pill' board*/
 /*
      The TFTLCD library comes from here:  https://github.com/prenticedavid/MCUFRIEND_kbv
@@ -10,7 +11,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200717";
+char RevDate[9] = "20200802";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -18,8 +19,8 @@ char RevDate[9] = "20200717";
 
 #include "EEPROM.h"  //support storage & retrieval of user declared settings
 #include "TouchScreen_kbv.h" //hacked version by david prentice
-#include <Adafruit_GFX.h>
-#include <gfxfont.h>
+#include "Adafruit_GFX.h"
+#include "gfxfont.h"
 //#include <MCUFRIEND_kbv.h>
 #include "MCUFRIEND_kbv.h"
 MCUFRIEND_kbv tft;
@@ -60,7 +61,8 @@ MCUFRIEND_kbv tft;
    In its current form, this sketch is setup to caputure Audio tones @ ~750Hz.
    If a another freq is perferred, change the value assigned to the "TARGET_FREQUENCYC" variable.
 */
-#define BIAS 2000  //BluePill 1987 MapleMine 2000
+//#define BIAS 2000  //BluePill 1987 MapleMine 2000
+int BIAS = 2000;  //BluePill 1987 MapleMine 2000
 //#define DataOutPin PB5 //Sound process (Tone Detector) output pin; i.e. Key signal
 #define DataOutPin PA9 //Sound process (Tone Detector) output pin; i.e. Key signal
 // #define SlowData 6 // Manually Ground this Digital pin when when the incoming CW transmission is >30WPM
@@ -98,6 +100,7 @@ float SAMPLING_RATE = 10850.0;// 10750.0;// 10520.0;//10126.5 ;//10520.0;//21900
 uint16 EEaddress = 0x10; // Start 2 words up from the base EEPROM page address (See EEPROM.H file for more detail)
 int CurCnt = 0;
 float AvgVal = 0.0;
+float NSF = 1.2; //NSF = Noise Scale Factor; used as part of calc to set determine Tone Signal to Noise ratio 
 bool OvrLd = false;
 
 int N = 0; //Block size sample 6 cylces of a 750Hz tone; ~8ms interval
@@ -130,6 +133,7 @@ int kOld = 0;
 
 float ToneLvl = 0;
 float noise = 0;
+long ManSqlch = 2000;
 float AvgToneSqlch = 0;
 int ToneOnCnt = 0;
 int KeyState = 0;
@@ -162,6 +166,7 @@ byte delayLine2 = 0;
 bool armHi = false;
 bool armLo = false;
 bool toneDetect = false;
+bool NoiseSqlch = true;
 /////////////////////////////////////////////////////////////////////
 // CW Decoder Global Variables
 
@@ -355,6 +360,7 @@ int cursorX = 0;
 int wpm = 0;
 int lastWPM = 0;
 int state = 0;
+struct DF_t { float DimFctr; float NSF; int BIAS; long ManSqlch; bool NoiseSqlch; };
 //Old Code table; Superceded by two new code tables (plus their companion index tables)
 //char morseTbl[] = {
 //  '~', '\0',
@@ -686,6 +692,7 @@ char DicTbl2[ARSIZE2][5]={
 //void Timer_ISR(void);
 // End of CW Decoder Global Variables
 
+struct DF_t DFault;
 ////////////////////////////////////////////////////////////////////
 // Special handler functions to store and retieve non-volital user data
 template <class T> int EEPROM_write(uint ee, const T& value)
@@ -980,30 +987,26 @@ void Timer_ISR(void) {
   //digitalWrite(DataOutPin, LOW); //for timing/tuning tests only
   mag = sqrt(GetMagnitudeSquared(Q1C, Q2C, coeffC));
   bool GudTone = true;
-  if (mag < 2000) GudTone = false; //JMH20200128
-//  float CurNoise = ((CurNoise) + ((1.2*AvgVal) - mag)) / 2;
-  //float CurNoise = ((CurNoise) + ((1.2*AvgVal) - (1.4*mag))) / 2;
-  //float CurNoise = ((CurNoise) + 1.6*((AvgVal) - (1.66*mag))) / 2;
-  //float CurNoise = ((CurNoise) + 1.6*((AvgVal) - (1.2*mag))) / 2;
-  //float CurNoise = ((CurNoise) + 2.3*((AvgVal) - (1.2*mag))) / 2;
-  //float CurNoise = ((CurNoise) + 2.3*((AvgVal) - (1.4*mag))) / 2;
-  //float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (1.4*mag))) / 2;
-   float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (1.2*mag))) / 2;
+  float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (NSF*mag))) / 2;
   ToneLvl = mag;
-  //noise = ((6 * noise) + (CurNoise)) / 7; // calculate the running average of the unfiltered digitized Sound
   noise = ((4 * noise) + (CurNoise)) / 5; // calculate the running average of the unfiltered digitized Sound
-  if (ToneLvl > noise & ToneLvl >  CurNoise) {
-    ++ToneOnCnt;
-    if (ToneOnCnt >= 4) {
-      ToneOnCnt = 3;
-      //MidPt =  (MidPt+(((ToneLvl -noise)/2)+ noise))/2;//NoiseAvgLvl
-      MidPt =  ((2 * MidPt) + (((ToneLvl - NoiseAvgLvl) / 4) + NoiseAvgLvl)) / 3;
-      if (MidPt >  AvgToneSqlch) AvgToneSqlch = MidPt;
+  if (NoiseSqlch){ 
+    if (mag < 2000) GudTone = false; //JMH20200128
+    if (ToneLvl > noise & ToneLvl >  CurNoise) {
+      ++ToneOnCnt;
+      if (ToneOnCnt >= 4) {
+        ToneOnCnt = 3;
+        MidPt =  ((2 * MidPt) + (((ToneLvl - NoiseAvgLvl) / 4) + NoiseAvgLvl)) / 3;
+        if (MidPt >  AvgToneSqlch) AvgToneSqlch = MidPt;
+      }
     }
+    SqlchVal = noise;
+    if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
   }
-  SqlchVal = noise;
-//  if ((ToneLvl < CurNoise) & (CurNoise > SqlchVal))  SqlchVal = CurNoise; //could be a static burst
-  if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
+  else{
+    SqlchVal = ManSqlch;
+  }
+  
   if ( ToneLvl > SqlchVal) {
     magC = (14 * magC + mag) / 15;
     magL = (14 * magL + (sqrt(GetMagnitudeSquared(Q1, Q2, coeffL)))) / 15;
@@ -1155,18 +1158,45 @@ void setup() {
   pinMode(MicPin, INPUT);
   Serial.begin(115200); // use the serial port
   strip.begin();
+  //store default settings for later recovery
+  DFault.DimFctr = DimFctr;
+  DFault.NSF = NSF; 
+  DFault.BIAS = BIAS; 
+  DFault.ManSqlch = ManSqlch; 
+  DFault.NoiseSqlch = NoiseSqlch;
   int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
   if(StrdFREQUENCY !=0 && n == 4){
     TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
     TARGET_FREQUENCYL = feqlratio*StrdFREQUENCY; //Hz
     TARGET_FREQUENCYH = feqhratio*StrdFREQUENCY; //Hz
   }
-  float StrdDimFctr = 0;
-  n = EEPROM_read(EEaddress+4, StrdDimFctr);
-  if(StrdDimFctr > 0 && n == 4){
-    DimFctr = StrdDimFctr;
+  float StrdVal = 0;//  float StrdDimFctr = 0;
+  int StrdintVal = 0;
+  long StrdLngVal = 0;
+  bool StrdTFVal;
+  n = EEPROM_read(EEaddress+4, StrdVal);
+  if(StrdVal > 0 && n == 4){
+    DimFctr = StrdVal;
+  }
+  StrdVal = 0;
+  n = EEPROM_read(EEaddress+8, StrdVal);
+  if(StrdVal > 0 && n == 4){
+    NSF = StrdVal;
+  }
+  n = EEPROM_read(EEaddress+12, StrdintVal);
+  if(StrdVal > 0 && n == 4){
+    BIAS = StrdintVal;
+  }
+
+  n = EEPROM_read(EEaddress+16, StrdLngVal);
+  if(StrdLngVal > 0 && n == 4){
+    ManSqlch = StrdLngVal;
   }
   
+  n = EEPROM_read(EEaddress+20, StrdTFVal);
+  if(n == 1){
+    NoiseSqlch = StrdTFVal;
+  }
   InitGoertzel();
   coeff = coeffC;
   N = NC;
@@ -1412,6 +1442,55 @@ void setuploop(){
   int DecLEDWdth = 80;
   int DecLEDHght = 40;
   int DecLEDY = IncFrqY-DecLEDHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+
+
+  //IncNoise Button parameters
+  int IncNOISEX = IncLEDX;
+  int IncNOISEWdth = 80;
+  int IncNOISEHght = 40;
+  int IncNOISEY = IncLEDY-IncNOISEHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
+
+  //DecNoise Button parameters
+  int DecNOISEX = DecLEDX;
+  int DecNOISEWdth = 80;
+  int DecNOISEHght = 40;
+  int DecNOISEY = IncLEDY-DecNOISEHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+
+  //IncBIAS Button parameters
+  int IncBIASX = IncLEDX;
+  int IncBIASWdth = 80;
+  int IncBIASHght = 40;
+  int IncBIASY = IncNOISEY-IncBIASHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
+
+  //DecBIAS Button parameters
+  int DecBIASX = DecLEDX;
+  int DecBIASWdth = 80;
+  int DecBIASHght = 40;
+  int DecBIASY = IncNOISEY-DecBIASHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+
+  //IncSQLCH Button parameters
+  int IncSQLCHWdth = 80;
+  int IncSQLCHHght = 40;
+  int IncSQLCHX = IncBIASX-(IncSQLCHWdth+1);
+  int IncSQLCHY =IncBIASY;//scrnHeight - (ExitHght+IncFrqHght + 5);
+
+  //DecSQLCH Button parameters
+  int DecSQLCHWdth = 80;
+  int DecSQLCHHght = 40;
+  int DecSQLCHX = DecBIASX+(DecBIASWdth+1);
+  int DecSQLCHY = DecBIASY;//scrnHeight - (ExitHght+DecFrqHght + 5);
+
+  //SqMode Button parameters
+  int SqModeWdth = 160;
+  int SqModeHght = 40;
+  int SqModeX = DecSQLCHX+(DecSQLCHWdth+1);
+  int SqModeY =DecNOISEY;
+
+  //SqMode Button parameters
+  int DfaultWdth = 160;
+  int DfaultHght = 40;
+  int DfaultX = DecSQLCHX+(DecSQLCHWdth+1);
+  int DfaultY =DecLEDY;
   
   py = 0;
   px = 0;
@@ -1428,17 +1507,28 @@ void setuploop(){
   //LED brigthnes Buttons
   DrawBtn(IncLEDX, IncLEDWdth, IncLEDY, IncLEDHght, "LED +", BLUE, WHITE);
   DrawBtn(DecLEDX, DecLEDWdth, DecLEDY, DecLEDHght, "LED -", BLUE, WHITE);
+  //Noise Buttons
+  DrawBtn(IncNOISEX, IncNOISEWdth, IncNOISEY, IncNOISEHght, "NSF +", RED, WHITE);
+  DrawBtn(DecNOISEX, DecNOISEWdth, DecNOISEY, DecNOISEHght, "NSF -", RED, WHITE);
+  //BIAS Buttons
+  DrawBtn(IncBIASX, IncBIASWdth, IncBIASY, IncBIASHght, "BIAS+", YELLOW, WHITE);
+  DrawBtn(DecBIASX, DecBIASWdth, DecBIASY, DecBIASHght, "BIAS-", YELLOW, WHITE);
+  //SQLCH Buttons
+  DrawBtn(IncSQLCHX, IncSQLCHWdth, IncSQLCHY, IncSQLCHHght, "MSQL+", MAGENTA, WHITE);
+  DrawBtn(DecSQLCHX, DecSQLCHWdth, DecSQLCHY, DecSQLCHHght, "MSQL-", MAGENTA, WHITE);
+  DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
+//  if (NoiseSqlch){
+//    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, "NOISE SQLCH", MAGENTA, WHITE);  
+//  }
+//  else{
+//    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, " MAN SQLCH", MAGENTA, WHITE);
+//  }
+
+  DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", GREEN, WHITE);
   
-  ShwUsrParams();  
-//  int ToneCfreq = int(TARGET_FREQUENCYC);
-//  int ToneDeci = int(10*(TARGET_FREQUENCYC-ToneCfreq));
-//  int DimFctrInt = int(DimFctr);
-//  int DimFctrDeci = int(100*(DimFctr-DimFctrInt));
-//  //Serial.print("TARGET_FREQUENCYC: "); //Serial.println(TARGET_FREQUENCYC);
-//  sprintf( Title, "Center Freq: %d.%d Hz; DimFctr:%d.%d", ToneCfreq, ToneDeci, DimFctrInt, DimFctrDeci );
-//  dispMsg(Title);
-  //Serial.print("DimFctr: "); Serial.println(DimFctr);
+  ShwUsrParams();
   delay(1000);
+
   while(setupflg){ // run inside this loop until user exits setup mode
     //Serial.print("tchcnt: "); Serial.println(tchcnt);
     tchcnt -=1; //decrement "techcnt" by 1
@@ -1513,7 +1603,107 @@ void setuploop(){
       }
     }
 
-    
+   if ((px > IncNOISEX && px < IncNOISEX+IncNOISEWdth) && (py > IncNOISEY && py < IncNOISEY+IncNOISEHght)&& buttonEnabled){
+      // Increment NOISE button was pressed
+      //buttonEnabled = false;
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        NSF += 0.05;
+        if(NSF>3.0) NSF= 3.0; 
+        ShwUsrParams();
+      }
+      
+    }
+
+    if ((px > DecNOISEX && px < DecNOISEX+DecNOISEWdth) && (py > DecNOISEY && py < DecNOISEY+DecNOISEHght)&& buttonEnabled){
+      //buttonEnabled = false;
+      // Decrement NOISE button was pressed
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        NSF -= 0.05;
+        if(NSF<0.05) NSF= 0.05; 
+        ShwUsrParams();
+      }
+    }
+
+
+    if ((px > IncBIASX && px < IncBIASX+IncBIASWdth) && (py > IncBIASY && py < IncBIASY+IncBIASHght)&& buttonEnabled){
+      // Increment BIAS button was pressed
+      //buttonEnabled = false;
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        BIAS += 10;
+        if(BIAS>2500) BIAS= 2500; 
+        ShwUsrParams();
+      }
+    }
+
+    if ((px > DecBIASX && px < DecBIASX+DecBIASWdth) && (py > DecBIASY && py < DecBIASY+DecBIASHght)&& buttonEnabled){
+      //buttonEnabled = false;
+      // Decrement BIAS button was pressed
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        BIAS -= 10;
+        if(BIAS<1500) BIAS= 1500; 
+        ShwUsrParams();
+      }
+    }
+
+    if ((px > IncSQLCHX && px < IncSQLCHX+IncSQLCHWdth) && (py > IncSQLCHY && py < IncSQLCHY+IncSQLCHHght)&& buttonEnabled){
+      // Increment SQLCH button was pressed
+      //buttonEnabled = false;
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 10000;
+        ManSqlch += 100;
+        if(ManSqlch>15000) ManSqlch= 15000; 
+        ShwUsrParams();
+      }
+    }
+
+    if ((px > DecSQLCHX && px < DecSQLCHX+DecSQLCHWdth) && (py > DecSQLCHY && py < DecSQLCHY+DecSQLCHHght)&& buttonEnabled){
+      //buttonEnabled = false;
+      // Decrement SQLCH button was pressed
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        ManSqlch -= 100;
+        if(ManSqlch<500) ManSqlch= 500; 
+        ShwUsrParams();
+      }
+    }
+
+    if ((px > SqModeX && px < SqModeX+SqModeWdth) && (py > SqModeY && py < SqModeY+SqModeHght)&& buttonEnabled){
+      // SQLCH Mode button was pressed
+      buttonEnabled = false;
+      //LEDLpcnt -=1;
+      //if(LEDLpcnt ==0){
+      //  LEDLpcnt = 20000;
+        NoiseSqlch = !NoiseSqlch;
+        DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
+        ShwUsrParams();
+      //}
+    }
+
+    if ((px > DfaultX && px < DfaultX+DfaultWdth) && (py > DfaultY && py < DfaultY+DfaultHght)&& buttonEnabled){
+      // Restore Defaults button was pressed
+      buttonEnabled = false;
+      DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", BLACK, WHITE);
+      DimFctr = DFault.DimFctr;
+      NSF = DFault.NSF; 
+      BIAS = DFault.BIAS; 
+      ManSqlch = DFault.ManSqlch; 
+      NoiseSqlch = DFault.NoiseSqlch;
+      DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
+      ShwUsrParams();
+      delay(150);
+      DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", GREEN, WHITE);
+      //}
+    }
     if ((px > ExitX && px < ExitX+ExitWdth) && (py > ExitY && py < ExitY+ExitHght)&& buttonEnabled){
       buttonEnabled = false;
       setupflg = false;// exit button was pressed
@@ -1528,6 +1718,12 @@ void setuploop(){
       int n= EEPROM_write(EEaddress+0, NewToneFreq);
       StrdDimFctr = DimFctr;
       n = EEPROM_write(EEaddress+4, StrdDimFctr);
+      n = EEPROM_write(EEaddress+8, NSF);
+      n = EEPROM_write(EEaddress+12, BIAS);
+      n = EEPROM_write(EEaddress+16, ManSqlch);
+      n = EEPROM_write(EEaddress+20, NoiseSqlch);
+      Serial.print("N: ");Serial.print(n);
+  
       delay(250);
       //Draw SaveBtn
       DrawBtn(SaveX, SaveWdth, SaveY, SaveHght, "Save", GREEN, WHITE);
@@ -1536,38 +1732,29 @@ void setuploop(){
     if (loopcnt == 0){
       loopcnt = 80000;
       cursorX = 0;
-      cursorY = 1 * (fontH + 10);
-      //tft.fillRect(cursorX, cursorY, scrnWidth, (fontH + 10), BLACK); //erase 2nd Row
+      cursorY = 2 * (fontH + 10);
       char StatMsg[40];
-      int CFrqMag = (int)(mag/100);
-      sprintf( StatMsg, "Tone Mag: %d", CFrqMag );
-      //Serial.println(StatMsg);
-      int msgpntr = 0;
-      int cnt = 0;
-      int offset = 0;
-      tft.setCursor(cursorX, cursorY);
-      while ( StatMsg[msgpntr] != 0) {
-        tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK);
-        char curChar = StatMsg[msgpntr];
-        tft.print(curChar);
-        msgpntr++;
-        cnt++;
-        if (((cnt) - offset)*fontW >= displayW) {
-          curRow++;
-          cursorX = 0;
-          cursorY = curRow * (fontH + 10);
-          offset = cnt;
-          tft.setCursor(cursorX, cursorY);
-        }
-        else cursorX = (cnt - offset) * fontW;
-        tft.setCursor(cursorX, cursorY);
-      }
-      while (msgpntr<39) {
-        tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK);
-        msgpntr++;
-        cnt++;
-        cursorX = (cnt - offset) * fontW;
-      }
+      sprintf( StatMsg, "Tone Mag: %d", (long)mag );
+      ShwData(cursorX, cursorY, StatMsg);
+//      cursorX = 0;
+//      cursorY = 2 * (fontH + 10);
+//      int NSFintval = (int)NSF;
+//      int NSFfract = 100*(NSF-NSFintval);
+//      sprintf( StatMsg, "NSF: %d.%d", NSFintval, NSFfract);
+//      ShwData(cursorX, cursorY, StatMsg);
+//
+//      cursorX = 0;
+//      cursorY = 3 * (fontH + 10);
+//      sprintf( StatMsg, "BIAS: %d", BIAS);
+//      ShwData(cursorX, cursorY, StatMsg);
+
+      //noise  
+      //cursorX =  16 * (fontW+4);//scrnWidth/2;
+      //cursorY = 2 * (fontH + 10);
+      sprintf( StatMsg, "Noise: %d", (long)noise);
+      ShwData(16 *fontW, cursorY, StatMsg);
+      
+
     }// end if(loopcnt == 0)
   }//End While Loop
   int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
@@ -1590,6 +1777,48 @@ void setuploop(){
 }//end of SetUp Loop
 
 //////////////////////////////////////////////////////////////////////////
+void DrwSQModeBtn(int SqModeX, int SqModeWdth, int SqModeY, int SqModeHght){
+  if (NoiseSqlch){
+    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, "NOISE SQLCH", MAGENTA, WHITE);  
+  }
+  else{
+    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, " MAN SQLCH", MAGENTA, WHITE);
+  }  
+}
+////////////////////////////////////////////////////////////////////////////
+void ShwData(int MsgX, int MsgY, char* TxtMsg){
+      //Serial.println(StatMsg);
+      int msgpntr = 0;
+      //int cnt = 0;
+      //int offset = 0;
+      tft.setCursor(MsgX, MsgY);
+      while (TxtMsg[msgpntr] != 0) {
+        tft.fillRect(MsgX, MsgY, fontW+4, (fontH + 10), BLACK);
+        char curChar =TxtMsg[msgpntr];
+        tft.print(curChar);
+        msgpntr++;
+        //cnt++;
+        MsgX += (fontW);
+//        if (((cnt) - offset)*fontW >= displayW) {
+//          curRow++;
+//          MsgX = 0;
+//          MsgY = curRow * (fontH + 10);
+//          offset = cnt;
+//          tft.setCursor(MsgX, MsgY);
+//        }
+//        else MsgX = (cnt - offset) * fontW;
+        tft.setCursor(MsgX, MsgY);
+      }
+      while (msgpntr<39) {
+        tft.fillRect(MsgX, MsgY, fontW+4, (fontH + 10), BLACK);
+        msgpntr++;
+        //cnt++;
+        //MsgX = (cnt - offset) * fontW;
+        MsgX += (fontW);
+      }
+}
+
+//////////////////////////////////////////////////////////////////////////
 void CalcFrqParams(float NewToneFreq){
   //float NewToneFreq = TARGET_FREQUENCYC + 10.0;
   TARGET_FREQUENCYC = NewToneFreq; //Hz
@@ -1600,24 +1829,6 @@ void CalcFrqParams(float NewToneFreq){
   N = NC;
   // now Display current freq
   ShwUsrParams();
-//  int ToneCfreq = int(TARGET_FREQUENCYC);
-//  int ToneDeci = int(10*(TARGET_FREQUENCYC-ToneCfreq));
-//  int DimFctrInt = int(DimFctr);
-//  int DimFctrDeci = int(100*(DimFctr-DimFctrInt));
-//  //Serial.print("TARGET_FREQUENCYC: "); Serial.println(TARGET_FREQUENCYC);
-//  //sprintf( Title, "Current Center Freq: %d.%d Hz", ToneCfreq, ToneDeci );
-//  sprintf( Title, "Center Freq: %d.%d Hz; DimFctr:%d.%d", ToneCfreq, ToneDeci, DimFctrInt, DimFctrDeci );
-//  tft.setCursor(textSrtX, textSrtY);
-//  for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
-//    Pgbuf[i] = 0;
-//  cnt = 0;
-//  curRow = 0;
-//  offset = 0;
-//  cursorX = 0;
-//  cursorY = 0;
-//  tft.fillRect(cursorX, cursorY, scrnWidth, (1 * (fontH + 10)), BLACK); //erase top 2 rows
-//  dispMsg(Title);
- 
 }
 //////////////////////////////////////////////////////////////////////////
 
@@ -1627,9 +1838,10 @@ void ShwUsrParams()
   int ToneDeci = int(10*(TARGET_FREQUENCYC-ToneCfreq));
   int DimFctrInt = int(DimFctr);
   int DimFctrDeci = int(100*(DimFctr-DimFctrInt));
+  char StatMsg[40];
   //Serial.print("TARGET_FREQUENCYC: "); Serial.println(TARGET_FREQUENCYC);
   //sprintf( Title, "Current Center Freq: %d.%d Hz", ToneCfreq, ToneDeci );
-  sprintf( Title, "Center Freq: %d.%d Hz; DimFctr:%d.%d", ToneCfreq, ToneDeci, DimFctrInt, DimFctrDeci );
+  sprintf( StatMsg, "Center Freq: %d.%d Hz; LEDBright:%d.%d", ToneCfreq, ToneDeci, DimFctrInt, DimFctrDeci );
   tft.setCursor(textSrtX, textSrtY);
   for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
     Pgbuf[i] = 0;
@@ -1639,7 +1851,23 @@ void ShwUsrParams()
   cursorX = 0;
   cursorY = 0;
   tft.fillRect(cursorX, cursorY, scrnWidth, (1 * (fontH + 10)), BLACK); //erase top 2 rows
-  dispMsg(Title);
+  dispMsg(StatMsg);
+  
+  cursorX = 0;
+  cursorY = 1 * (fontH + 10);
+  int NSFintval = (int)NSF;
+  int NSFfract = 100*(NSF-NSFintval);
+  sprintf( StatMsg, "NSF: %d.%d; ", NSFintval, NSFfract);
+  ShwData(cursorX, cursorY, StatMsg);
+
+  cursorX = 11*fontW;
+  //cursorY = 1 * (fontH + 10);
+  sprintf( StatMsg, "BIAS: %d; ", BIAS);
+  ShwData(cursorX, cursorY, StatMsg);
+  cursorX = 23*fontW;
+  //cursorY = 1 * (fontH + 10);
+  sprintf( StatMsg, "MSQL: %d; ", ManSqlch);
+  ShwData(cursorX, cursorY, StatMsg);
   return;
 }
 //////////////////////////////////////////////////////////////////////////

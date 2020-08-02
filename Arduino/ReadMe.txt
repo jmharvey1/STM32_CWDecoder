@@ -2,7 +2,7 @@ The files found here are designed to be compiled and loaded using the Arduino id
 The STM32_CWdecoderW_ToneDetectR03 folder/sketch is the sketch to use if you are following the instructions
 from the video verbatum. i.e. 64K bluepill & MCUfriends compatible 3.5" display sheild.
 
-The MapleMini_CWdecoderW_ToneDetectR00 folder/sketch should work with 128k STM32f MCUs (e.g.; Maple Mini).
+The MapleMini_CWdecoderW_ToneDetectR01 folder/sketch should work with 128k STM32f MCUs (e.g.; Maple Mini).
 This sketch will work with the MCUfriends 3.5" display. Additionally it can also configured to work with some variants 
 of the MCUfriends display, that use the same parallel data bus. 
 

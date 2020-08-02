@@ -16,9 +16,8 @@ char RevDate[9] = "20200306";
 
 #include "TouchScreen_kbv.h" //hacked version by david prentice
 
-#include <Adafruit_GFX.h>
-#include <gfxfont.h>
-//#include <MCUFRIEND_kbv.h>
+#include "Adafruit_GFX.h"
+#include "gfxfont.h"
 #include "MCUFRIEND_kbv.h"
 MCUFRIEND_kbv tft;
 /*
@@ -950,6 +949,7 @@ void Timer_ISR(void) {
   SqlchVal = noise;
 //  if ((ToneLvl < CurNoise) & (CurNoise > SqlchVal))  SqlchVal = CurNoise; //could be a static burst
   if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
+  SqlchVal = 10000;
   if ( ToneLvl > SqlchVal) {
     magC = (14 * magC + mag) / 15;
     magL = (14 * magL + (sqrt(GetMagnitudeSquared(Q1, Q2, coeffL)))) / 15;
