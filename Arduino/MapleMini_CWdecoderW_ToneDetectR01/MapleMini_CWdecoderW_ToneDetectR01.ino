@@ -1,7 +1,8 @@
-/* Rev: 20220-08-02 Added additional calls to EEPROM library, to store/retrieve user settings  plus a reset option to return user settings to original sketch values*/
-/* Rev: 20220-07-22 Added calls to EEPROM library, to store and retrieve user settings (tone decode frequency)*/ 
-/* Rev: 20220-06-18 main change added support for small(320X240) and large(480X320) screens*/
-/* Rev: 20220-03-04 Same code as STM32_CWDecoderW_ToneDetectR02 but Changes to Squelch code to track noise floor to better capture tone signals being depressed by RCVR AGC changes */
+/* Rev: 2020-08-08 Added DeBuG Modes to list of User adjustable Settings*/
+/* Rev: 2020-08-02 Added additional calls to EEPROM library, to store/retrieve user settings  plus a reset option to return user settings to original sketch values*/
+/* Rev: 2020-07-22 Added calls to EEPROM library, to store and retrieve user settings (tone decode frequency)*/ 
+/* Rev: 2020-06-18 main change added support for small(320X240) and large(480X320) screens*/
+/* Rev: 2020-03-04 Same code as STM32_CWDecoderW_ToneDetectR02 but Changes to Squelch code to track noise floor to better capture tone signals being depressed by RCVR AGC changes */
 /* Rev: 2020-02-22 Adjusted values to work with GY-MAX4466 Mic Board*/
 /* Rev: 2020-01-29 1st attempt at porting Sketch to STM32 'Blue Pill' board*/
 /*
@@ -11,7 +12,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200802";
+char RevDate[9] = "20200808";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -360,7 +361,8 @@ int cursorX = 0;
 int wpm = 0;
 int lastWPM = 0;
 int state = 0;
-struct DF_t { float DimFctr; float NSF; int BIAS; long ManSqlch; bool NoiseSqlch; };
+int DeBug = 0;
+struct DF_t { float DimFctr; float NSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; };
 //Old Code table; Superceded by two new code tables (plus their companion index tables)
 //char morseTbl[] = {
 //  '~', '\0',
@@ -1164,6 +1166,7 @@ void setup() {
   DFault.BIAS = BIAS; 
   DFault.ManSqlch = ManSqlch; 
   DFault.NoiseSqlch = NoiseSqlch;
+  DFault.DeBug = DeBug;
   int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
   if(StrdFREQUENCY !=0 && n == 4){
     TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
@@ -1200,6 +1203,26 @@ void setup() {
   InitGoertzel();
   coeff = coeffC;
   N = NC;
+
+  n = EEPROM_read(EEaddress+24, StrdintVal);
+  if(StrdintVal > 0 && n == 4){
+    DeBug = StrdintVal;
+  }
+
+  switch (DeBug) {
+    case 0:
+      TonPltFlg = false;// false;//used to control Arduino plotting (via) the USB serial port; To enable, don't modify here, but modify in the sketch
+      Test = false;//  true;//  //Controls Serial port printing in the decode character process; To Enable/Disable, modify here
+      break;
+    case 1:
+      TonPltFlg = true;
+      Test = false;
+      break;
+    case 2:
+      TonPltFlg = false;
+      Test = true;
+      break;  
+  }
 
   //Setup & Enable Timer ISR (in this case Timer2)
   Timer2.setMode(TIMER_CH1, TIMER_OUTPUTCOMPARE);
@@ -1486,11 +1509,17 @@ void setuploop(){
   int SqModeX = DecSQLCHX+(DecSQLCHWdth+1);
   int SqModeY =DecNOISEY;
 
-  //SqMode Button parameters
+  //Dfault Button parameters
   int DfaultWdth = 160;
   int DfaultHght = 40;
   int DfaultX = DecSQLCHX+(DecSQLCHWdth+1);
   int DfaultY =DecLEDY;
+
+  //DeBug Button parameters
+  int DeBugWdth = 160;
+  int DeBugHght = 40;
+  int DeBugX = DecFrqX+(DecFrqWdth+1);
+  int DeBugY =DecFrqY;
   
   py = 0;
   px = 0;
@@ -1517,15 +1546,8 @@ void setuploop(){
   DrawBtn(IncSQLCHX, IncSQLCHWdth, IncSQLCHY, IncSQLCHHght, "MSQL+", MAGENTA, WHITE);
   DrawBtn(DecSQLCHX, DecSQLCHWdth, DecSQLCHY, DecSQLCHHght, "MSQL-", MAGENTA, WHITE);
   DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
-//  if (NoiseSqlch){
-//    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, "NOISE SQLCH", MAGENTA, WHITE);  
-//  }
-//  else{
-//    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, " MAN SQLCH", MAGENTA, WHITE);
-//  }
-
   DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", GREEN, WHITE);
-  
+  DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
   ShwUsrParams();
   delay(1000);
 
@@ -1689,16 +1711,28 @@ void setuploop(){
       //}
     }
 
+    if ((px > DeBugX && px < DeBugX+DeBugWdth) && (py > DeBugY && py < DeBugY+DeBugHght)&& buttonEnabled){
+      // Debug Mode button was pressed
+      buttonEnabled = false;
+      DeBug +=1;
+      if(DeBug ==3) DeBug = 0;
+      DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
+      ShwUsrParams();
+      
+    }
+
     if ((px > DfaultX && px < DfaultX+DfaultWdth) && (py > DfaultY && py < DfaultY+DfaultHght)&& buttonEnabled){
       // Restore Defaults button was pressed
       buttonEnabled = false;
       DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", BLACK, WHITE);
       DimFctr = DFault.DimFctr;
       NSF = DFault.NSF; 
-      BIAS = DFault.BIAS; 
+      BIAS = DFault.BIAS;
+      DeBug = DFault.DeBug; 
       ManSqlch = DFault.ManSqlch; 
       NoiseSqlch = DFault.NoiseSqlch;
       DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
+      DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
       ShwUsrParams();
       delay(150);
       DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", GREEN, WHITE);
@@ -1722,7 +1756,8 @@ void setuploop(){
       n = EEPROM_write(EEaddress+12, BIAS);
       n = EEPROM_write(EEaddress+16, ManSqlch);
       n = EEPROM_write(EEaddress+20, NoiseSqlch);
-      Serial.print("N: ");Serial.print(n);
+      n = EEPROM_write(EEaddress+24, DeBug);
+      //Serial.print("N: ");Serial.print(n);
   
       delay(250);
       //Draw SaveBtn
@@ -1786,6 +1821,33 @@ void DrwSQModeBtn(int SqModeX, int SqModeWdth, int SqModeY, int SqModeHght){
   }  
 }
 ////////////////////////////////////////////////////////////////////////////
+
+void DrwDBModeBtn(int DeBugX, int DeBugWdth, int DeBugY, int DeBugHght){
+  char textMsg[15];
+  switch(DeBug){
+    case 0:
+      TonPltFlg = false;
+      Test = false;
+      sprintf(textMsg, " DEBUG Off");
+      break;  
+    case 1:
+      TonPltFlg = true;
+      Test = false;
+      sprintf(textMsg, " DEBUG Plot");
+      break;
+    case 2:
+      TonPltFlg = false;
+      Test = true;
+      sprintf(textMsg, "DEBUG Decode");
+      break;
+    default:
+      sprintf(textMsg, "DB Val: %d", DeBug);
+      break;
+        
+  }
+  DrawBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght, textMsg, MAGENTA, WHITE);
+        
+}
 void ShwData(int MsgX, int MsgY, char* TxtMsg){
       //Serial.println(StatMsg);
       int msgpntr = 0;
