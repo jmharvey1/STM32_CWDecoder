@@ -12,7 +12,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200808";
+char RevDate[9] = "20200809";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -1002,7 +1002,7 @@ void Timer_ISR(void) {
         if (MidPt >  AvgToneSqlch) AvgToneSqlch = MidPt;
       }
     }
-    SqlchVal = noise;
+    SqlchVal = noise+(0.5*((AvgVal) - (NSF*mag))); //JMH 20200809 added "+(0.5*((AvgVal) - (NSF*mag)))" to better supress lightening noise
     if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
   }
   else{
@@ -1032,6 +1032,7 @@ void Timer_ISR(void) {
     //    Serial.print(NoiseAvgLvl);//Purple
     //    Serial.print("\t");
     Serial.print(noise);//Purple
+    //Serial.print(1.0*((AvgVal) - (NSF*mag)));
     Serial.print("\t");
     Serial.print(SqlchVal);//Gray//Serial.print(AvgToneSqlch);//Gray   
     Serial.print("\t");
