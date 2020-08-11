@@ -1,3 +1,4 @@
+/* Rev: 2020-08-11 Added NSF (Noise Scale Factor) Parameter to list of User adjustable Settings*/
 /* Rev: 2020-08-08 Added DeBuG Modes to list of User adjustable Settings*/
 /* Rev: 2020-08-02 Added additional calls to EEPROM library, to store/retrieve user settings  plus a reset option to return user settings to original sketch values*/
 /* Rev: 2020-07-22 Added calls to EEPROM library, to store and retrieve user settings (tone decode frequency)*/ 
@@ -12,7 +13,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200809";
+char RevDate[9] = "20200811";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -101,7 +102,8 @@ float SAMPLING_RATE = 10850.0;// 10750.0;// 10520.0;//10126.5 ;//10520.0;//21900
 uint16 EEaddress = 0x10; // Start 2 words up from the base EEPROM page address (See EEPROM.H file for more detail)
 int CurCnt = 0;
 float AvgVal = 0.0;
-float NSF = 1.2; //NSF = Noise Scale Factor; used as part of calc to set determine Tone Signal to Noise ratio 
+float TSF = 1.2; //TSF = Tone Scale Factor; used as part of calc to set/determine Tone Signal to Noise ratio; Tone Component
+float NSF = 1.0; //NSF = Noise Scale Factor; used as part of calc to set determine Tone Signal to Noise ratio; Noise Component   
 bool OvrLd = false;
 
 int N = 0; //Block size sample 6 cylces of a 750Hz tone; ~8ms interval
@@ -362,7 +364,7 @@ int wpm = 0;
 int lastWPM = 0;
 int state = 0;
 int DeBug = 0;
-struct DF_t { float DimFctr; float NSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; };
+struct DF_t { float DimFctr; float TSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; float NSF;};
 //Old Code table; Superceded by two new code tables (plus their companion index tables)
 //char morseTbl[] = {
 //  '~', '\0',
@@ -988,8 +990,9 @@ void Timer_ISR(void) {
   //Enough data points taken, now process Sound data for a valid tone
   //digitalWrite(DataOutPin, LOW); //for timing/tuning tests only
   mag = sqrt(GetMagnitudeSquared(Q1C, Q2C, coeffC));
+  AvgVal = NSF* AvgVal;
   bool GudTone = true;
-  float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (NSF*mag))) / 2;
+  float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (TSF*mag))) / 2;
   ToneLvl = mag;
   noise = ((4 * noise) + (CurNoise)) / 5; // calculate the running average of the unfiltered digitized Sound
   if (NoiseSqlch){ 
@@ -1002,7 +1005,7 @@ void Timer_ISR(void) {
         if (MidPt >  AvgToneSqlch) AvgToneSqlch = MidPt;
       }
     }
-    SqlchVal = noise+(0.5*((AvgVal) - (NSF*mag))); //JMH 20200809 added "+(0.5*((AvgVal) - (NSF*mag)))" to better supress lightening noise
+    SqlchVal = noise+(0.5*((AvgVal) - (TSF*mag))); //JMH 20200809 added "+(0.5*((AvgVal) - (TSF*mag)))" to better supress lightening noise
     if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
   }
   else{
@@ -1032,7 +1035,7 @@ void Timer_ISR(void) {
     //    Serial.print(NoiseAvgLvl);//Purple
     //    Serial.print("\t");
     Serial.print(noise);//Purple
-    //Serial.print(1.0*((AvgVal) - (NSF*mag)));
+    //Serial.print(1.0*((AvgVal) - (TSF*mag)));
     Serial.print("\t");
     Serial.print(SqlchVal);//Gray//Serial.print(AvgToneSqlch);//Gray   
     Serial.print("\t");
@@ -1163,6 +1166,7 @@ void setup() {
   strip.begin();
   //store default settings for later recovery
   DFault.DimFctr = DimFctr;
+  DFault.TSF = TSF;
   DFault.NSF = NSF; 
   DFault.BIAS = BIAS; 
   DFault.ManSqlch = ManSqlch; 
@@ -1185,7 +1189,7 @@ void setup() {
   StrdVal = 0;
   n = EEPROM_read(EEaddress+8, StrdVal);
   if(StrdVal > 0 && n == 4){
-    NSF = StrdVal;
+    TSF = StrdVal;
   }
   n = EEPROM_read(EEaddress+12, StrdintVal);
   if(StrdVal > 0 && n == 4){
@@ -1208,6 +1212,11 @@ void setup() {
   n = EEPROM_read(EEaddress+24, StrdintVal);
   if(StrdintVal > 0 && n == 4){
     DeBug = StrdintVal;
+  }
+
+  n = EEPROM_read(EEaddress+28, StrdVal);
+  if(StrdVal > 0 && n == 4){
+    NSF = StrdVal;
   }
 
   switch (DeBug) {
@@ -1468,29 +1477,41 @@ void setuploop(){
   int DecLEDY = IncFrqY-DecLEDHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
 
 
-  //IncNoise Button parameters
-  int IncNOISEX = IncLEDX;
+  //IncTone Scale Factor Button Position parameters
+  int IncTONEX = IncLEDX;
+  int IncTONEWdth = 80;
+  int IncTONEHght = 40;
+  int IncTONEY = IncLEDY-IncTONEHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
+
+  //DecTone Scale Factor Button Position  parameters
+  int DecTONEX = DecLEDX;
+  int DecTONEWdth = 80;
+  int DecTONEHght = 40;
+  int DecTONEY = IncLEDY-DecTONEHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+
+  //IncNoise Scale Factor Button Position parameters
   int IncNOISEWdth = 80;
   int IncNOISEHght = 40;
-  int IncNOISEY = IncLEDY-IncNOISEHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
-
-  //DecNoise Button parameters
-  int DecNOISEX = DecLEDX;
+  int IncNOISEX = IncTONEX-(IncNOISEWdth+1);
+  int IncNOISEY = IncLEDY-IncNOISEHght;
+  
+  //DecNoise Scale Factor Button Position  parameters
   int DecNOISEWdth = 80;
   int DecNOISEHght = 40;
-  int DecNOISEY = IncLEDY-DecNOISEHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+  int DecNOISEX = DecTONEX+(DecTONEWdth+1);
+  int DecNOISEY = IncLEDY-DecNOISEHght;
 
   //IncBIAS Button parameters
   int IncBIASX = IncLEDX;
   int IncBIASWdth = 80;
   int IncBIASHght = 40;
-  int IncBIASY = IncNOISEY-IncBIASHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
+  int IncBIASY = IncTONEY-IncBIASHght;
 
   //DecBIAS Button parameters
   int DecBIASX = DecLEDX;
   int DecBIASWdth = 80;
   int DecBIASHght = 40;
-  int DecBIASY = IncNOISEY-DecBIASHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+  int DecBIASY = IncTONEY-DecBIASHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
 
   //IncSQLCH Button parameters
   int IncSQLCHWdth = 80;
@@ -1508,7 +1529,7 @@ void setuploop(){
   int SqModeWdth = 160;
   int SqModeHght = 40;
   int SqModeX = DecSQLCHX+(DecSQLCHWdth+1);
-  int SqModeY =DecNOISEY;
+  int SqModeY =DecTONEY;
 
   //Dfault Button parameters
   int DfaultWdth = 160;
@@ -1537,7 +1558,10 @@ void setuploop(){
   //LED brigthnes Buttons
   DrawBtn(IncLEDX, IncLEDWdth, IncLEDY, IncLEDHght, "LED +", BLUE, WHITE);
   DrawBtn(DecLEDX, DecLEDWdth, DecLEDY, DecLEDHght, "LED -", BLUE, WHITE);
-  //Noise Buttons
+  //Tone Scale Factor Buttons
+  DrawBtn(IncTONEX, IncTONEWdth, IncTONEY, IncTONEHght, "TSF +", RED, WHITE);
+  DrawBtn(DecTONEX, DecTONEWdth, DecTONEY, DecTONEHght, "TSF -", RED, WHITE);
+  //Noise Scale Factor Buttons
   DrawBtn(IncNOISEX, IncNOISEWdth, IncNOISEY, IncNOISEHght, "NSF +", RED, WHITE);
   DrawBtn(DecNOISEX, DecNOISEWdth, DecNOISEY, DecNOISEHght, "NSF -", RED, WHITE);
   //BIAS Buttons
@@ -1626,30 +1650,51 @@ void setuploop(){
       }
     }
 
+   if ((px > IncTONEX && px < IncTONEX+IncTONEWdth) && (py > IncTONEY && py < IncTONEY+IncTONEHght)&& buttonEnabled){
+      // Increment TONE Scale Factor button was pressed
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        TSF += 0.05;
+        if(TSF>3.0) TSF= 3.0; 
+        ShwUsrParams();
+      }
+      
+    }
+
+    if ((px > DecTONEX && px < DecTONEX+DecTONEWdth) && (py > DecTONEY && py < DecTONEY+DecTONEHght)&& buttonEnabled){
+      // Decrement TONE Scale Factor button was pressed
+      LEDLpcnt -=1;
+      if(LEDLpcnt ==0){
+        LEDLpcnt = 20000;
+        TSF -= 0.05;
+        if(TSF<0.05) TSF= 0.05; 
+        ShwUsrParams();
+      }
+    }
+
    if ((px > IncNOISEX && px < IncNOISEX+IncNOISEWdth) && (py > IncNOISEY && py < IncNOISEY+IncNOISEHght)&& buttonEnabled){
-      // Increment NOISE button was pressed
-      //buttonEnabled = false;
+      // Increment NOISE Scale Factor button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
         LEDLpcnt = 20000;
         NSF += 0.05;
-        if(NSF>3.0) NSF= 3.0; 
+        if(NSF>1.2) NSF= 1.2; 
         ShwUsrParams();
       }
       
     }
 
     if ((px > DecNOISEX && px < DecNOISEX+DecNOISEWdth) && (py > DecNOISEY && py < DecNOISEY+DecNOISEHght)&& buttonEnabled){
-      //buttonEnabled = false;
-      // Decrement NOISE button was pressed
+      // Decrement NOISE Scale Factor button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
         LEDLpcnt = 20000;
         NSF -= 0.05;
-        if(NSF<0.05) NSF= 0.05; 
+        if(NSF<0.5) NSF= 0.5; 
         ShwUsrParams();
       }
-    }
+    }    
 
 
     if ((px > IncBIASX && px < IncBIASX+IncBIASWdth) && (py > IncBIASY && py < IncBIASY+IncBIASHght)&& buttonEnabled){
@@ -1727,6 +1772,7 @@ void setuploop(){
       buttonEnabled = false;
       DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", BLACK, WHITE);
       DimFctr = DFault.DimFctr;
+      TSF = DFault.TSF;
       NSF = DFault.NSF; 
       BIAS = DFault.BIAS;
       DeBug = DFault.DeBug; 
@@ -1753,11 +1799,12 @@ void setuploop(){
       int n= EEPROM_write(EEaddress+0, NewToneFreq);
       StrdDimFctr = DimFctr;
       n = EEPROM_write(EEaddress+4, StrdDimFctr);
-      n = EEPROM_write(EEaddress+8, NSF);
+      n = EEPROM_write(EEaddress+8, TSF);
       n = EEPROM_write(EEaddress+12, BIAS);
       n = EEPROM_write(EEaddress+16, ManSqlch);
       n = EEPROM_write(EEaddress+20, NoiseSqlch);
       n = EEPROM_write(EEaddress+24, DeBug);
+      n = EEPROM_write(EEaddress+28, NSF);
       //Serial.print("N: ");Serial.print(n);
   
       delay(250);
@@ -1774,9 +1821,9 @@ void setuploop(){
       ShwData(cursorX, cursorY, StatMsg);
 //      cursorX = 0;
 //      cursorY = 2 * (fontH + 10);
-//      int NSFintval = (int)NSF;
-//      int NSFfract = 100*(NSF-NSFintval);
-//      sprintf( StatMsg, "NSF: %d.%d", NSFintval, NSFfract);
+//      int TSFintval = (int)TSF;
+//      int TSFfract = 100*(TSF-TSFintval);
+//      sprintf( StatMsg, "TSF: %d.%d", TSFintval, TSFfract);
 //      ShwData(cursorX, cursorY, StatMsg);
 //
 //      cursorX = 0;
@@ -1918,18 +1965,25 @@ void ShwUsrParams()
   
   cursorX = 0;
   cursorY = 1 * (fontH + 10);
-  int NSFintval = (int)NSF;
-  int NSFfract = 100*(NSF-NSFintval);
-  sprintf( StatMsg, "NSF: %d.%d; ", NSFintval, NSFfract);
+  int TSFintval = (int)TSF;
+  int TSFfract = 100*(TSF-TSFintval);
+  sprintf( StatMsg, "TSF:%d.%d; ", TSFintval, TSFfract);
   ShwData(cursorX, cursorY, StatMsg);
 
-  cursorX = 11*fontW;
+  cursorX = 10*fontW;
   //cursorY = 1 * (fontH + 10);
-  sprintf( StatMsg, "BIAS: %d; ", BIAS);
+  sprintf( StatMsg, "BIAS:%d; ", BIAS);
   ShwData(cursorX, cursorY, StatMsg);
-  cursorX = 23*fontW;
+  cursorX = 21*fontW;
   //cursorY = 1 * (fontH + 10);
-  sprintf( StatMsg, "MSQL: %d; ", ManSqlch);
+  sprintf( StatMsg, "MSQL:%d; ", ManSqlch);
+  ShwData(cursorX, cursorY, StatMsg);
+
+  cursorX = 32*fontW;
+  //cursorY = 1 * (fontH + 10);
+  int NSFintval = (int)NSF;
+  int NSFfract = 100*(NSF-NSFintval);
+  sprintf( StatMsg, "NSF:%d.%d; ", NSFintval, NSFfract);
   ShwData(cursorX, cursorY, StatMsg);
   return;
 }
