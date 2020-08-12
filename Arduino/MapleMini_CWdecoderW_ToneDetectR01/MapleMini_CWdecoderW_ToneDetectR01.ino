@@ -1,3 +1,4 @@
+/* Rev: 2020-08-12 Additional Tweaks to Maple Mini Sketch to improve decoding in a QRN environment*/
 /* Rev: 2020-08-11 Added NSF (Noise Scale Factor) Parameter to list of User adjustable Settings*/
 /* Rev: 2020-08-08 Added DeBuG Modes to list of User adjustable Settings*/
 /* Rev: 2020-08-02 Added additional calls to EEPROM library, to store/retrieve user settings  plus a reset option to return user settings to original sketch values*/
@@ -13,7 +14,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200811";
+char RevDate[9] = "20200812";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -769,7 +770,8 @@ void KeyEvntSR() {
       //noSigStrt =  micros();
       period = noSigStrt - start;
       if(2*period<avgDit){ //seems to be a glitch
-        avgDit= (5*avgDit +period)/6; //go ahead & factor this period in, just incase we are now listening to a faster WPM stream
+        if(DeCodeVal == 1) return;// its a glitch before any real key closures have been detected, so ignore completely 
+        if(magC>10000) avgDit= (5*avgDit +period)/6; //go ahead & factor this period in, just incase we are now listening to a faster WPM stream
         noSigStrt = OldNoStrt;
         start = Oldstart;
         letterBrk = OldltrBrk;
@@ -992,7 +994,7 @@ void Timer_ISR(void) {
   mag = sqrt(GetMagnitudeSquared(Q1C, Q2C, coeffC));
   AvgVal = NSF* AvgVal;
   bool GudTone = true;
-  float CurNoise = ((CurNoise) + 2.0*((AvgVal) - (TSF*mag))) / 2;
+  float CurNoise = ((AvgVal) - (TSF*mag)); //((CurNoise) + 2.0*((AvgVal) - (TSF*mag))) / 2;
   ToneLvl = mag;
   noise = ((4 * noise) + (CurNoise)) / 5; // calculate the running average of the unfiltered digitized Sound
   if (NoiseSqlch){ 
@@ -1005,7 +1007,9 @@ void Timer_ISR(void) {
         if (MidPt >  AvgToneSqlch) AvgToneSqlch = MidPt;
       }
     }
-    SqlchVal = noise+(0.5*((AvgVal) - (TSF*mag))); //JMH 20200809 added "+(0.5*((AvgVal) - (TSF*mag)))" to better supress lightening noise
+    //SqlchVal = noise+(0.5*((AvgVal) - (TSF*mag))); //JMH 20200809 added "+(0.5*((AvgVal) - (TSF*mag)))" to better supress lightening noise
+    SqlchVal = noise+(0.5*CurNoise);
+    SqlchVal = noise+CurNoise;
     if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
   }
   else{
@@ -2219,7 +2223,8 @@ void chkChrCmplt() {
 
 
 int CalcAvgPrd(int thisdur) {
-
+  
+  if(magC<10000) return thisdur; //JMH 02020811 Don't do anything with this period. Signal is too noisy to evaluate
   if (thisdur > 3.4 * avgDit) thisdur = 3.4 * avgDit; //limit the effect that a single sustained "keydown" event cant have
   if (thisdur < 0.5 *avgDah){ // this appears to be a "dit"
     avgDit = (9 * avgDit + thisdur) / 10;
