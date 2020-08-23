@@ -1,3 +1,5 @@
+/* Rev: 2020-08-22 New Bug1 Mode; uses "Key Down" event to manage/set "decodeval" value. 
+/* Rev: 2020-08-14 Added sloppy sending checks (PD & DLL) */
 /* Rev: 2020-08-12 Additional Tweaks to Maple Mini Sketch to improve decoding in a QRN environment*/
 /* Rev: 2020-08-11 Added NSF (Noise Scale Factor) Parameter to list of User adjustable Settings*/
 /* Rev: 2020-08-08 Added DeBuG Modes to list of User adjustable Settings*/
@@ -14,7 +16,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200812";
+char RevDate[9] = "20200822";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -142,6 +144,10 @@ float AvgToneSqlch = 0;
 int ToneOnCnt = 0;
 int KeyState = 0;
 int ltrCmplt = -1500;
+bool badLtrBrk = false;
+bool dletechar = false;
+bool ConcatSymbl = false;
+//bool newRow = false; //used to manage bug3 cursor position; especially critical when starting a new line during delete last characte
 
 /*
    Note. Library uses SPI1
@@ -287,10 +293,12 @@ char Msgbuf[50];
 char Title[50];
 char P[13];
 int statsMode = 0;
+bool SCD = true; //Sloppy Code Debugging; if "true", use ide Serial Monitor to see output/results
 bool chkStatsMode = true;
 bool SwMode = false;
 bool BugMode = false;//true;//
 bool Bug2 = false;//false;//
+bool Bug3 = false;
 bool NrmMode = true;
 bool CalcAvgdeadSpace = false;
 bool CalcDitFlg = false;
@@ -298,8 +306,10 @@ bool LtrBrkFlg = true;
 bool NuWrd = true;
 bool NuWrdflg = false;
 bool SetRtnflg = false;
-int unsigned ClrBtnCnt = 0; 
-int unsigned ModeCnt = 0; // used to cycle thru the 3 decode modes (norm, bug, bug2)
+int unsigned ClrBtnCnt = 0;
+int unsigned ModeBtnCnt = 0; 
+int unsigned ModeCnt = 0; // used to cycle thru the 4 decode modes (norm, bug1, bug2, bug3)
+float LtBrkSF = 0.3; //leter Break Scale factor. Used to catch sloppy sending; typical values //(0.66*ltrBrk)  //(0.15*ltrBrk) //(0.5*ltrBrk)
 int unsigned ModeCntRef = 0;
 //char TxtMsg1[] = {"1 2 3 4 5 6 7 8 9 10 11\n"};
 //char TxtMsg2[] = {"This is my 3rd Message\n"};
@@ -314,7 +324,7 @@ volatile bool mark = LOW;
 bool dataRdy = LOW;
 
 volatile long period = 0;
-volatile unsigned long start = 0;
+volatile unsigned long STart = 0;
 volatile unsigned long Oldstart = 0;
 volatile unsigned long thisWordBrk = 0;
 //volatile long Oldstart=0;//JMH 20190620
@@ -343,7 +353,14 @@ volatile unsigned long avgDeadSpace = avgDit;
 volatile int space = 0;
 unsigned long lastDah = avgDah;
 volatile unsigned long letterBrk = 0; //letterBrk =avgDit;
+volatile unsigned long letterBrk1 = 0;
 volatile unsigned long OldltrBrk = 0;
+unsigned long ShrtBrkA = 0;
+unsigned long UsrLtrBrk = 100; // used to track the average letter break interval
+//unsigned long ShrtBrk0 = 0;
+unsigned long ShrtBrk[10];
+int LtrCntr =0;
+//unsigned long ShrtBrk2 = 0;
 unsigned long AvgLtrBrk = 0;
 volatile unsigned long ltrBrk = 0;
 int shwltrBrk = 0;
@@ -476,18 +493,21 @@ char DicTbl1[ARSIZE][2]=
     "."
 };
 //Multi character decode values/table(s)
-#define ARSIZE2 105
+#define ARSIZE2 111
 static unsigned int CodeVal2[ARSIZE2]={
   19,
   31,
   34,
   38,
   40,
+  41,
   42,
   44,
   45,
   52,
   54,
+  55,
+  58,
   64,
   69,
   70,
@@ -527,9 +547,11 @@ static unsigned int CodeVal2[ARSIZE2]={
   209,
   211,
   212,
+  213,
   216,
   232,
   234,
+  241,
   242,
   243,
   244,
@@ -543,6 +565,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   364,
   416,
   442,
+  443,
   468,
   482,
   492,
@@ -591,12 +614,15 @@ char DicTbl2[ARSIZE2][5]={
   "VE",
   "UN",
   "<AS>",
+  "AU",
   "<AR>",
   "AD",
   "WA",
   "ND",
   "<KN>",
-  "HE",
+  "NO",
+  "GN",
+  "HI",
   "<SK>",
   "SG",
   "US",
@@ -606,6 +632,7 @@ char DicTbl2[ARSIZE2][5]={
   "AV",
   "AF",
   "AL",
+  "CK",
   "AP",
   "PA",
   "AY",
@@ -634,10 +661,11 @@ char DicTbl2[ARSIZE2][5]={
   "THE",
   "CU",
   "CW",
-  "AL",
+  "CK",
   "YS",
   "QS",  
   "QR",
+  "OV",
   "OF",
   "OUT",
   "OL",
@@ -651,6 +679,7 @@ char DicTbl2[ARSIZE2][5]={
   "AYI",
   "CH",
   "NOR",
+  "NOW",
   "MAL",
   "OVE",
   "OAD",
@@ -726,19 +755,52 @@ void KeyEvntSR() {
   SetLtrBrk();
   chkChrCmplt();
   if (digitalRead(interruptPin) == LOW) { //key-down
-    Oldstart = start;
-    start = millis();
-    //start = micros();
-    //unsigned long deadSpace = start-noSigStrt;
-    deadSpace = start - noSigStrt;
+    Oldstart = STart;
+    STart = millis();
+    deadSpace = STart - noSigStrt;
     OldltrBrk = letterBrk;
+    // 20200818 jmh following 3 lines to support sloppy code debuging
+//    for( int i = 9; i>0; i--){
+//      ShrtBrk[i] =ShrtBrk[i-1];
+//    }
+    ShrtBrk[0] = STart - letterBrk1;
+    //LtrCntr++;
+//    Serial.print(STart - letterBrk1);
+//    Serial.print("\t");
+//    Serial.println(ltrBrk);
+// test to detect sloppy sender timing, if "true" this keydown event appears to be a continuation of previous character
+    //if( ((ShrtBrk[0] < ShrtBrkA) |(ShrtBrk[0] < ltrBrk/2)) & Bug3){
+    if( ((ShrtBrk[0] < ShrtBrkA)) & Bug3){
+      badLtrBrk = true; // this flag is just used to drive the "toneplot" graph 
+      //go get that last character displayed
+      if(cnt>CPL+1){//Pgbuf now has enough data to test for sloppy sending
+        char curchar = Pgbuf[cnt-(CPL+1)];
+        if(curchar != ' '){// don't do anything if the last character displayed was space
+          int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
+          if(pos1 != -1){
+            DeCodeVal = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
+            dletechar = true;
+            ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
+//            if (Test){ // 20200818 jmh sloppy code debuging
+//              Serial.print("bad: ");
+//              Serial.print(curchar); 
+//              Serial.print("\t");
+//              Serial.print(pos1);
+//              Serial.print("\t");
+//              Serial.println(DeCodeVal);
+//            }
+          }
+        }
+        else badLtrBrk = false;
+      }
+    }
     letterBrk = 0;
     ltrCmplt = -1800; // used in plot mode, to show where/when letter breaks are detected 
     CalcAvgdeadSpace = true;
     
     if (wordBrkFlg) {
       wordBrkFlg = false;
-      thisWordBrk = start - wordStrt;
+      thisWordBrk = STart - wordStrt;
       //Serial.println(thisWordBrk);
       if (thisWordBrk < 11 * avgDeadSpace) {
         wordBrk = (5 * wordBrk + thisWordBrk) / 6;
@@ -766,14 +828,15 @@ void KeyEvntSR() {
   else { // "Key Up" evaluations;
     if (DeCodeVal != 0) {//Normally true; We're working with a valid symbol set. Reset timers
       unsigned long OldNoStrt = noSigStrt;
+      badLtrBrk = false;
       noSigStrt =  millis();
       //noSigStrt =  micros();
-      period = noSigStrt - start;
+      period = noSigStrt - STart;
       if(2*period<avgDit){ //seems to be a glitch
         if(DeCodeVal == 1) return;// its a glitch before any real key closures have been detected, so ignore completely 
         if(magC>10000) avgDit= (5*avgDit +period)/6; //go ahead & factor this period in, just incase we are now listening to a faster WPM stream
         noSigStrt = OldNoStrt;
-        start = Oldstart;
+        STart = Oldstart;
         letterBrk = OldltrBrk;
         return;// abort processing this event 
       }
@@ -786,7 +849,7 @@ void KeyEvntSR() {
         return;
       }
      
-      start = 0;
+      STart = 0;
     } //End if(DeCodeVal!= 0)
 
   }// end of key interrupt processing;
@@ -1082,7 +1145,11 @@ void Timer_ISR(void) {
     // Add the final entry to the plot data
     Serial.print(KeyState);//Light Blue
     Serial.print("\t");
-    Serial.println(ltrCmplt);//Light ??
+    Serial.print(ltrCmplt);//Black
+    Serial.print("\t");
+    float badltrbrkT = -4000;
+    if(badLtrBrk) badltrbrkT = -1900;
+    Serial.println(badltrbrkT);//BLue
     //TonPltFlg = false;
   }
 
@@ -1298,7 +1365,7 @@ void setup() {
 
   enableINT(); //This is a local function, and is defined below
 
-  start = 0;
+  STart = 0;
   WrdStrt = millis();
 //  Serial.print("Starting...");
 //  sprintf( Title, "             KW4KD (%s)           ", RevDate );
@@ -1337,17 +1404,7 @@ void loop()
     //use the following for Screen orientation set to 1
     py = map(tp.y, TS_TOP, TS_BOT, 0, scrnHeight);
     px = map(tp.x, TS_LEFT, TS_RT, 0, scrnWidth);
-    //use the following for Screen orientation set to 3
-//    py = map(tp.y, TS_BOT, TS_TOP, 0, scrnHeight);
-//    px = map(tp.x, TS_RT, TS_LEFT, 0, scrnWidth);
-//    Serial.print("tp.z = "); Serial.print(tp.z);
-//    Serial.print("\t; px: "); Serial.print(px);
-//    Serial.print("\t; py: "); Serial.println(py);
-//    buttonEnabled = false;
-//    If (NoTchCnt > 0){
-//      buttonEnabled = true
-//      NoTchCnt = 0;
-//    }
+
     
     if (px > Stxl && px < Stxh && py > ylo && py < yhi && !SwMode) { //User has touched a point inside the status area, & wants to change WPM/avgtiming
       //Note: SwMode gets reset to "false" in 'ShowSpeed' routine, after user quits pressing the status area of the screen.
@@ -1379,33 +1436,7 @@ void loop()
     { //reset (clear) the Screen
       SetRtnflg = false;
       SftReset();
-//      buttonEnabled = false; //Disable button
-//      ClrBtnCnt = 0;
-//      //   Serial.print("Clear Screen");
-//  //    if ( interruptPin == 2) KillINT();
-//  //    else enableDisplay();
-//      enableDisplay();
-//      tft.fillScreen(BLACK);
-//      DrawButton();
-//      Button2();
-//      WPMdefault();
-////      avgDit = 80; //average 'Dit' duration
-////      avgDeadSpace = avgDit;
-////      AvgLtrBrk = 3*avgDit;
-////      avgDah = 240;
-////      wpm = CalcWPM(avgDit);
-//      px = 0;
-//      py = 0;
-//      showSpeed();
-//      tft.setCursor(textSrtX, textSrtY);
-//  //    if ( interruptPin == 2) enableINT();
-//      for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
-//        Pgbuf[i] = 0;
-//      cnt = 0;
-//      curRow = 0;
-//      offset = 0;
-//      cursorX = 0;
-//      cursorY = 0;
+
     } else if (px > bxlo && px < bxhi && py > ylo && py < yhi && !buttonEnabled && !SetRtnflg) // The user has touched a point inside the Blue rectangle, but the screen has already been cleared.
     // so need to test if user presses long engough to signal change to go to menu setup mode
     {
@@ -1416,15 +1447,25 @@ void loop()
     } else if (px > gxlo && px < gxhi && py > ylo && py < yhi && buttonEnabled) { //User has touched a point inside the Green Mode rectangle, & wants to change Mode (normal/bug1/bug2)
       px = 0; //kill button press
       py = 0; //kill button press
-      buttonEnabled = false;
-      ModeCnt += 1;
-      if (ModeCnt >= 3) ModeCnt = 0;
-      ModeCntRef = ModeCnt;
-      SetModFlgs(ModeCnt);
-      enableDisplay();
-      Button2();
+      //Serial.println("Mode Button");
+      //buttonEnabled = false;
+      if (btnPrsdCnt < 10) { // press screen 'debounce' interval
+        btnPrsdCnt += 1;
+        //Serial.println(btnPrsdCnt);
+      }
+      else { // user pressed screen long enough to indicate real desire to change Mode (normal/bug1/bug2/bug3)
+        if(btnPrsdCnt == 10){
+          buttonEnabled = false;
+          ModeCnt += 1;
+          if (ModeCnt == 4) ModeCnt = 0;
+          //ModeCntRef = ModeCnt;
+          SetModFlgs(ModeCnt);
+          enableDisplay();
+          Button2();
+        }
+        else btnPrsdCnt = 10;
+      }
     }
-
   chkChrCmplt();
   while (CodeValBuf[0] > 0) {
     DisplayChar(CodeValBuf[0]);
@@ -2042,28 +2083,33 @@ void ChkDeadSpace(void)
 {
   if (CalcAvgdeadSpace) { // Just detected the start of a new keydown event
     CalcAvgdeadSpace = false;
+//    Serial.print(DeCodeVal);
     if (NuWrd) lastWrdVal = millis() - WrdStrt;
-    //if (NuWrd) lastWrdVal = micros() - WrdStrt;
     if ((deadSpace > 15) && (deadSpace < 240) && (!NuWrd)) { // looks like we have a legit dead space interval(its between 5 & 50 WPM)
       if (Bug2) {
         if (deadSpace < avgDit && deadSpace > avgDit / 4) {
           avgDeadSpace = (15 * avgDeadSpace + deadSpace) / 16;
         }
       } else {
-        //if ((deadSpace < wordBrk)) {
-        if ((deadSpace < lastDah)) {
+        if ((deadSpace < lastDah & DeCodeVal != 1)) { //20200817 added "DeCodeVal != 1" for more consistent letter break calcs
           //if (DeCodeVal != 1) { //ignore letterbrk dead space intervals
           if(ltrCmplt < -350){  //ignore letterbrk dead space intervals
             //avgDeadSpace = (3 * avgDeadSpace + deadSpace) / 4;
             avgDeadSpace = (7 * avgDeadSpace + deadSpace) / 8;
           } else AvgLtrBrk = ((9 * AvgLtrBrk) + deadSpace) / 10;
         }
+//        Serial.print("\t");
+//        Serial.print(deadSpace);
+//        Serial.print("\t");
+//        Serial.print(avgDeadSpace);
         if (NrmMode && (avgDeadSpace < avgDit)) { // running Normall mode; use Dit timing to establish minmum "space" interval
           if(ltrCmplt < -350) avgDeadSpace = avgDit; //ignore letterbrk dead space intervals
-          //Serial.println("Path 3");
+//          Serial.print("  Path 3: ");
+//          Serial.print(avgDeadSpace);
         }
       }
     }
+//    Serial.print("\n");
     //    Serial.print("; ");
     //    Serial.print(avgDeadSpace);
     //    Serial.print("; ");
@@ -2094,6 +2140,10 @@ void SetLtrBrk(void)
   if (!LtrBrkFlg) return;
 // Just detected the start of a new keyUp event
   LtrBrkFlg = false;
+  LtrCntr++;
+  for( int i = 9; i>0; i--){
+      ShrtBrk[i] =ShrtBrk[i-1];
+    }
   //Figure out how much time to allow for a letter break
   if (Bug2) {
     space = ((3 * space) + avgDeadSpace) / 4;
@@ -2130,6 +2180,7 @@ void SetLtrBrk(void)
   }
 
   letterBrk = ltrBrk + noSigStrt; //set the next letter break "time stamp"
+  
   //if (BugMode) letterBrk = letterBrk + 0.8 * avgDit ;//20200306 removed to reduce having to deal with multi letter sysmbols
   if (NuWrd && NuWrdflg) {
     NuWrd = false;
@@ -2139,18 +2190,20 @@ void SetLtrBrk(void)
 ////////////////////////////////////////////////////////////////////////
 void chkChrCmplt() {
   state = 0;
-  unsigned long now = millis();
-  //unsigned long now = micros();
+  unsigned long Now = millis();
+  if((Now - letterBrk1) > 35000) letterBrk1 = Now - 10000;// keep "letterBrk1" from becoming an absurdly large value  
+  //unsigned long Now = micros();
   //check to see if enough time has passed since the last key closure to signify that the character is complete
-  if ((now >= letterBrk) && letterBrk != 0 && DeCodeVal > 1) {
+  if ((Now >= letterBrk) && letterBrk != 0 && DeCodeVal > 1) {
     state = 1; //have a complete letter
     ltrCmplt = -350;
+    letterBrk1 = letterBrk;
 
     //Serial.println("   ");//testing only; comment out when running normally
-    //Serial.println(now-letterBrk);
+    //Serial.println(Now-letterBrk);
     //Serial.println(letterBrk);
   }
-  float noKeySig = (float)(now - noSigStrt);
+  float noKeySig = (float)(Now - noSigStrt);
   if ((noKeySig >= 0.75 * ((float)wordBrk) ) && noSigStrt != 0 && !wordBrkFlg && (DeCodeVal == 0)) {
     //Serial.print(wordBrk);
     //Serial.print("\t");
@@ -2265,15 +2318,25 @@ void SetModFlgs(int ModeVal) {
       BugMode = false;
       Bug2 = false;
       NrmMode = true;
+      Bug3 = false;
       break;
     case 1:
+      BugMode = false;
+      Bug2 = false;
+      NrmMode = true;
+      if(!Bug3) ShrtBrkA = ltrBrk/2;
+      Bug3 = true;
+      break;  
+    case 2:
       BugMode = true;
       NrmMode = false;
+      Bug3 = false;
       break;
-    case 2:
+    case 3:
       BugMode = false;
       Bug2 = true;
       NrmMode = false;
+      Bug3 = false;
       break;
   }
 }
@@ -2295,16 +2358,25 @@ void DisplayChar(unsigned int decodeval) {
   //clear buffer
   for ( int i = 0; i < sizeof(Msgbuf);  ++i )
     Msgbuf[i] = 0;
-  pos1 = linearSearchBreak(decodeval, CodeVal1, ARSIZE);
-  if(pos1<0){
+  //if((decodeval==255) & dletechar) dletechar = false; // this should be ok to do here, because if decodeval = 255 we will be passing one & only one character over to the "dispMsg()" routine 
+  pos1 = linearSearchBreak(decodeval, CodeVal1, ARSIZE); // note: decodeval '255' returns SPACE character
+  if(pos1<0){// did not find a match in the standard Morse table. So go check the extended dictionary
     pos1 = linearSearchBreak(decodeval, CodeVal2, ARSIZE2);
     if(pos1<0){
       //sprintf( Msgbuf, "decodeval: %d ", decodeval);//use when debugging Dictionary table(s)
-      sprintf( Msgbuf, "*"); //Enable for Normal running 
+      sprintf( Msgbuf, "*");
+      if(Bug3 & ConcatSymbl){// if we're here using a sloppy code mode concatenated symbol, and came up empty, then maybe we're combining too many dit/dahs into a bundle. So lets back off a bit
+        if(ShrtBrkA> 15) ShrtBrkA -= 10; // allow it to go below 5; otherwise it could flip( unsigned #) and become absurdly large
+        if(SCD){
+          Serial.println(ShrtBrkA);// 20200818 jmh sloppy code debuging
+        }
+      }
+      
     }
     else sprintf( Msgbuf, "%s", DicTbl2[pos1] );
   }
   else sprintf( Msgbuf, "%s", DicTbl1[pos1] );
+  ConcatSymbl = false;
   if (Msgbuf[0] == 'E' || Msgbuf[0] == 'T') ++badCodeCnt;
   else if(decodeval !=255) badCodeCnt = 0;
   if (badCodeCnt > 5 && wpm > 25){ // do an auto reset back to 15wpm
@@ -2347,21 +2419,228 @@ int linearSearchBreak(long val, unsigned int arr[], int sz)
 }
 
 //////////////////////////////////////////////////////////////////////
+int linearSrchChr(char val, char arr[ARSIZE][2], int sz)
+{
+  int pos = -1;
+  //Serial.print(val);
+  //Serial.print(";\t");
+  for (int i = 0; i < sz; i++)
+  {
+    char tstchar = arr[i][0];
+    //Serial.print(tstchar);
+    
+    if(tstchar==val){
+      pos = i;
+      break;
+    }
+  }
+  return pos;
+}
+
+//////////////////////////////////////////////////////////////////////
 void dispMsg(char Msgbuf[50]) {
   if (Test) Serial.println(Msgbuf);
   int msgpntr = 0;
-  //  if ( interruptPin == 2) KillINT();
-  //  else enableDisplay();
+  int xoffset = 0;
+  char info[25];
+  // sprintf(info, "");
+  info[0] = 0;
   enableDisplay();
-  tft.setCursor(cursorX, cursorY);
+//  if((Msgbuf[msgpntr]==' ') & dletechar){
+//    dletechar = false;
+//    if(Bug3  & SCD) Serial.println("Kill Delete");
+//  }
+//  if(dletechar){ // we need to erase the last displayed character
+//    dletechar = false;
+//    if(Bug3  & SCD) Serial.print("Replace Last Char :");
+//    //first,buzz thru the pgbuf we find the the last charater (delete the last character in the pgbuf)
+//    while(Pgbuf[msgpntr]!=0) msgpntr++;
+//    Pgbuf[msgpntr-1] =0;
+//    msgpntr =0;
+//    cnt -=1;
+//    int xoffset = cnt;
+//    //use the xoffset to locate the character position (on the display's x axis)
+//    while (xoffset > CPL) xoffset -=CPL;
+//    //int Xpos =  xoffset*(fontW);
+//    cursorX  =  xoffset*(fontW);
+//    //Check to see if the last character printed to the display generated a new line of text
+//    if(newRow){ // it did, we need to back up one line/row
+//      curRow--;
+//      offset -= CPL;
+//      cursorY = curRow * (fontH + 10);
+//    }
+//    tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK); //black out/erase last displayed character
+//    tft.setCursor(cursorX, cursorY);
+//  }
+//  else tft.setCursor(cursorX, cursorY);
   while ( Msgbuf[msgpntr] != 0) {
+    if((Msgbuf[msgpntr]==' ') & dletechar){
+      dletechar = false;
+      if(Bug3  & SCD) Serial.println("Kill Delete");
+    }
+    if(dletechar){ // we need to erase the last displayed character
+      dletechar = false;
+      if(Bug3  & SCD) sprintf( info, " *Replace Last Char* "); //Serial.print("Replace Last Char :");
+      //first,buzz thru the pgbuf array until we find the the last charater (delete the last character in the pgbuf)
+      int TmpPntr = 0;
+      while(Pgbuf[TmpPntr]!=0) TmpPntr++;
+      Pgbuf[TmpPntr-1] =0;// delete last character in the array by replacing it with a "0"
+      //TmpPntr =0;
+      cnt--;
+      xoffset = cnt;
+      //use the xoffset to locate the character position (on the display's x axis)
+      //int DelRow = 0;
+      curRow = 0;
+      while (xoffset >= CPL){
+        xoffset -=CPL;
+        //DelRow++;
+        curRow++; 
+      }
+      //int Xpos =  xoffset*(fontW);
+      cursorX  =  xoffset*(fontW);
+      //cursorY = DelRow * (fontH + 10);
+      cursorY = curRow * (fontH + 10);
+      if(xoffset==(CPL-1)) offset= offset-CPL; //we just jump back to last letter in the previous line, So we need setup to properly calculate what display row we will be on, come the next character
+      tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK); //black out/erase last displayed character
+      tft.setCursor(cursorX, cursorY);
+    }
+    else{
+//      if(newRow & SCD)Serial.println(" newRow Flag Cleared");
+//      newRow = false;
+      tft.setCursor(cursorX, cursorY);
+    }
+    
+
+    
     char curChar = Msgbuf[msgpntr];
-    if (curRow > 0) sprintf ( Pgbuf, "%s%c", Pgbuf, curChar);
     tft.print(curChar);
+    if (curRow > 0) sprintf ( Pgbuf, "%s%c", Pgbuf, curChar);  // add the character just "printed" to the "PgBuf" 
+    
+    if (cnt>CPL){//Pgbuf now has enough data to test for sloppy sending
+      if(Pgbuf[cnt-(CPL+1)]== 'P'  & Pgbuf[cnt-(CPL)]=='D'){ //test for "PD"
+        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "AND)"); //"true"; Insert preceeding character plus correction "AND"
+      }
+      if(Pgbuf[cnt-(CPL+2)]=='P' & Pgbuf[cnt-(CPL+1)]=='L'  & Pgbuf[cnt-(CPL)]=='L'){ //test for "PD"
+        sprintf ( Msgbuf, " %s", "(WELL)"); //"true"; Insert correction "WELL"
+      }
+//      Serial.print(Pgbuf[cnt-(CPL+2)]);
+//      Serial.print(Pgbuf[cnt-(CPL+1)]);
+//      Serial.println(Pgbuf[cnt-(CPL)]);
+
+//      if(Bug3  & Pgbuf[cnt-(CPL+1)]=='T'  & Pgbuf[cnt-(CPL)]=='T'){ //test for //& Pgbuf[cnt-(CPL+2)]=='T'
+//        //if( (ShrtBrk[LtrCntr]+5< 1.30*ltrBrk) ){//if( ShrtBrk0+5< ltrBrk){
+//        //if ((ShrtBrk[LtrCntr]+10< 1.5*avgDeadSpace)&(ShrtBrk[LtrCntr]> 0.6*avgDeadSpace)){
+//        if ((1.5* ShrtBrk[LtrCntr]< 1.5*avgDeadSpace)&(ShrtBrk[LtrCntr]> 0.6*avgDeadSpace)){  
+//          ShrtBrkA = 1.5*ShrtBrk[LtrCntr];//ShrtBrkA = ShrtBrk[LtrCntr]+5; //ShrtBrkA = ShrtBrk0+5;
+//        }//else ShrtBrkA = int(1.10*ltrBrk);
+//        // 20200818 jmh sloppy code debuging:
+//      
+//        if(SCD){
+//          Serial.print(LtrCntr);
+//          //Serial.print(ShrtBrkA);//Serial.print(LtBrkSF);
+//          //Serial.print('\t');
+//          Serial.print(" - ");
+//          Serial.print(ShrtBrk[LtrCntr+2]);
+//          Serial.print(" - ");
+//          Serial.print('"');
+//          Serial.print(Pgbuf[cnt-(CPL+2)]);
+//          Serial.print('"');
+//          Serial.print(" - ");
+//          Serial.print(ShrtBrk[LtrCntr+1]);
+//          Serial.print(" - ");
+//          Serial.print('"');
+//          Serial.print(Pgbuf[cnt-(CPL+1)]);
+//          Serial.print('"');
+//          Serial.print(" - ");
+//          Serial.print(ShrtBrk[LtrCntr]);
+//          Serial.print(" - ");
+//          Serial.print('"');
+//          Serial.print(Pgbuf[cnt-(CPL)]);
+//          Serial.print('"');
+//          Serial.print('\t');
+//          Serial.print(ShrtBrkA);
+//          Serial.print('/');
+//          Serial.print(ltrBrk);
+//          Serial.print('\t');
+//          Serial.print(msgpntr);
+//          Serial.print('\t');
+//          Serial.print(cnt);
+//          Serial.print('\t');
+//          Serial.println(xoffset);
+//        
+//          LtrCntr = 0;
+//        } 
+//      }else if(Bug3  & SCD){
+//        Serial.print(LtrCntr);
+//        Serial.print(" - ");
+//        Serial.print(ShrtBrk[LtrCntr]);
+//        Serial.print(" - ");
+//        Serial.print('"');
+//        Serial.print(Pgbuf[cnt-(CPL)]);
+//        Serial.print('"');
+//        Serial.print('\t');
+//        Serial.print(ShrtBrkA);
+//        Serial.print('/');
+//        Serial.print(ltrBrk);
+//        Serial.print('\t');
+//        Serial.print(msgpntr);
+//        Serial.print('\t');
+//        Serial.print(cnt);
+//        Serial.print('\t');
+//        Serial.println(xoffset);
+//        LtrCntr = 0;
+//      }
+    }
+    //recalculate maximum wait interval to splice decodeval 
+    if(Bug3 & (cnt>CPL) & (Pgbuf[cnt-(CPL)]!=' ') ){
+      //if ((ShrtBrk[LtrCntr] > 1.5*ShrtBrkA) & (ShrtBrk[LtrCntr] <3* ltrBrk)){
+      if ((ShrtBrk[LtrCntr] > 1.5*ltrBrk) & (ShrtBrk[LtrCntr] <3* ltrBrk)){
+        UsrLtrBrk = (9*UsrLtrBrk+ShrtBrk[LtrCntr])/10;
+        ShrtBrkA =  0.45*UsrLtrBrk; 
+      } else if((info[0] != 0)&(ShrtBrk[LtrCntr]<ShrtBrkA/2) ){// we just processed a spliced character
+        UsrLtrBrk -= 10;
+        ShrtBrkA =  0.45*UsrLtrBrk;
+      }
+//      if((1.2*ShrtBrk[LtrCntr]>ShrtBrkA)&(1.2*ShrtBrk[LtrCntr]<1.2*ltrBrk )){ 
+//        ShrtBrkA = 1.2*ShrtBrk[LtrCntr]; 
+//      }else if(1.2*ShrtBrk[LtrCntr]<ShrtBrkA){
+//        ShrtBrkA -= 2; 
+//      }
+  }
+    if(Bug3 & SCD){
+      Serial.print(LtrCntr);
+      Serial.print(" - ");
+      Serial.print(ShrtBrk[LtrCntr]);
+      Serial.print(" - ");
+      Serial.print('\t');
+      Serial.print('"');
+      Serial.print(Pgbuf[cnt-(CPL)]);
+      Serial.print('"');
+      Serial.print('\t');
+      Serial.print(ShrtBrkA);
+      Serial.print('/');
+      Serial.print(ltrBrk);
+      Serial.print('\t');
+      Serial.print(msgpntr);
+      Serial.print('\t');
+      Serial.print(cnt);
+      Serial.print('\t');
+      Serial.print(xoffset);
+      Serial.println(info);
+      LtrCntr = 0;
+   }
+
+//    if (Test & cnt>CPL+1 & curRow > 0){
+//      Serial.print("Pgbuf Vals: ");
+//      Serial.print(Pgbuf[cnt-(CPL+2)]);
+//      Serial.print(Pgbuf[cnt-(CPL+1)]);
+//      Serial.println(Pgbuf[cnt-(CPL)]);
+//    }
     msgpntr++;
     cnt++;
-    if (((cnt) - offset)*fontW >= displayW) {
+    if ((cnt - offset)*fontW >= displayW) {
       curRow++;
+      //newRow = true;
       cursorX = 0;
       cursorY = curRow * (fontH + 10);
       offset = cnt;
@@ -2370,7 +2649,10 @@ void dispMsg(char Msgbuf[50]) {
         scrollpg();
       }
     }
-    else cursorX = (cnt - offset) * fontW;
+    else{
+      cursorX = (cnt - offset) * fontW;
+      //newRow = false;
+    }
   }
   ChkDeadSpace();
   SetLtrBrk();
@@ -2459,6 +2741,7 @@ void Button2() {
   tft.setCursor(Bposx + 11, Bposy + 12);
   tft.setTextColor(WHITE);
   tft.setTextSize(2);
+  //Serial.println(ModeCnt);
   switch (ModeCnt) {
     case 0:
       tft.print("Norm");
@@ -2469,12 +2752,13 @@ void Button2() {
     case 2:
       tft.print("Bug2");
       break;
+    case 3:
+      tft.print("Bug3");
+      break;  
     default:
       tft.print(ModeCnt);
       break;
   }
-  //  if(!BugMode) tft.print("Norm");
-  //  else  tft.print("Bug");
 }
 ///////////////////////////////////////////////////////////
 
