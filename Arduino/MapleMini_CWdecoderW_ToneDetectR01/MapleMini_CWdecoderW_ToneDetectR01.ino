@@ -1,4 +1,6 @@
-/* Rev: 2020-08-22 New Bug1 Mode; uses "Key Down" event to manage/set "decodeval" value. 
+/* Rev: 2020-08-27 Reworked "setup" button management, mainly to simplify & streamline the code needed to support them*/
+/* Rev: 2020-08-25  Added "ScanFreq()"  to enable the tone detector to automatically "zero in" on the CW Audio tone (500 - 900 Hz) */
+/* Rev: 2020-08-22  New "Bug1" Mode; uses "Key Down" event to manage/set "decodeval" value. */
 /* Rev: 2020-08-14 Added sloppy sending checks (PD & DLL) */
 /* Rev: 2020-08-12 Additional Tweaks to Maple Mini Sketch to improve decoding in a QRN environment*/
 /* Rev: 2020-08-11 Added NSF (Noise Scale Factor) Parameter to list of User adjustable Settings*/
@@ -16,7 +18,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200822";
+char RevDate[9] = "20200827";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -66,6 +68,16 @@ MCUFRIEND_kbv tft;
    In its current form, this sketch is setup to caputure Audio tones @ ~750Hz.
    If a another freq is perferred, change the value assigned to the "TARGET_FREQUENCYC" variable.
 */
+/*
+ * Rev: 2020-08-22:
+ * This update debuts a new stategy in CW decoding. Its intended to better handle keying timing often found with "Bug" style sending. 
+ * It differs from previous algorithms used in this sketch. Those all rely on timing linked to "key up" event. 
+ * This method, instead, uses the "Key down" event to decide if what follows is a continuation of the last character sent, 
+ * or truely a new charater. 
+ * This stategy is enabled in the "Bug1" mode only.
+ * 
+ * At this time, its still, "a work in progress". 
+ */
 //#define BIAS 2000  //BluePill 1987 MapleMine 2000
 int BIAS = 2000;  //BluePill 1987 MapleMine 2000
 //#define DataOutPin PB5 //Sound process (Tone Detector) output pin; i.e. Key signal
@@ -177,6 +189,13 @@ bool armHi = false;
 bool armLo = false;
 bool toneDetect = false;
 bool NoiseSqlch = true;
+bool setupflg = false; // true while decoder is operating in "User Set Parameters" mode
+/* Start Auto Tune varialbes */
+bool AutoTune = true;
+bool Scaning = false;
+  
+/* end Auto Tune variables */
+
 /////////////////////////////////////////////////////////////////////
 // CW Decoder Global Variables
 
@@ -357,6 +376,7 @@ volatile unsigned long letterBrk1 = 0;
 volatile unsigned long OldltrBrk = 0;
 unsigned long ShrtBrkA = 0;
 unsigned long UsrLtrBrk = 100; // used to track the average letter break interval
+float ShrtFctr = 0.52;// 0.45; //used in degug3 mode to control what precentage of the current "UsrLtrBrk" interval to use to detect the continuation of the previous character
 //unsigned long ShrtBrk0 = 0;
 unsigned long ShrtBrk[10];
 int LtrCntr =0;
@@ -382,7 +402,19 @@ int wpm = 0;
 int lastWPM = 0;
 int state = 0;
 int DeBug = 0;
-struct DF_t { float DimFctr; float TSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; float NSF;};
+char DeBugMsg[100];
+
+struct DF_t { float DimFctr; float TSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; float NSF; bool AutoTune;};
+struct BtnParams {
+   int BtnXpos;  //Button X position
+   int BtnWdth;  //Button Width
+   int BtnYpos;  //Button X position
+   int BtnHght;  //Button Height
+   const char* Captn;
+   unsigned int BtnClr; 
+   unsigned int TxtClr;
+};
+
 //Old Code table; Superceded by two new code tables (plus their companion index tables)
 //char morseTbl[] = {
 //  '~', '\0',
@@ -493,7 +525,7 @@ char DicTbl1[ARSIZE][2]=
     "."
 };
 //Multi character decode values/table(s)
-#define ARSIZE2 111
+#define ARSIZE2 112
 static unsigned int CodeVal2[ARSIZE2]={
   19,
   31,
@@ -584,6 +616,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   974,
   1348,
   1480,
+  1795,
   1940,
   1942,
   14752,
@@ -632,10 +665,10 @@ char DicTbl2[ARSIZE2][5]={
   "AV",
   "AF",
   "AL",
-  "CK",
-  "AP",
-  "PA",
+  "86",
+  "89",
   "AY",
+  "92",
   "AMI",
   "THE",
   "CA",
@@ -698,6 +731,7 @@ char DicTbl2[ARSIZE2][5]={
   "OUG",
   "ALL",
   "JUS",
+  "73",
   "OUL",
   "OUP",
   "MUCH",
@@ -708,7 +742,7 @@ char DicTbl2[ARSIZE2][5]={
   "OA",
   "AB",
   "AC",
-  "WN",
+  "AG",
   "XYL",
   "OY",
   "TY",
@@ -746,7 +780,33 @@ template <class T> int EEPROM_read(int ee, T& value)
        *p++ = EEPROM.read(ee++);
    return i;
 }
-////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////
+void SetDBgCptn(char *textMsg){
+  //char textMsg[15];
+  switch(DeBug){
+    case 0:
+      TonPltFlg = false;
+      Test = false;
+      sprintf(textMsg, " DEBUG Off");
+      break;  
+    case 1:
+      TonPltFlg = true;
+      Test = false;
+      sprintf(textMsg, " DEBUG Plot");
+      break;
+    case 2:
+      TonPltFlg = false;
+      Test = true;
+      sprintf(textMsg, "DEBUG Decode");
+      break;
+    default:
+      sprintf(textMsg, "DB Val: %d", DeBug);
+      break;
+        
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 
 // Install the interrupt routine.
@@ -893,6 +953,13 @@ void KeyEvntSR() {
     if ((NrmlDah)||((DeCodeVal ==2) & (period > 1.4 * avgDit)&Bug2)) { // it smells like a "Dah".  
       //JMH added 20020206
       DeCodeVal = DeCodeVal + 1; // it appears to be a "dah' so set the least significant bit to "one"
+      //if(Bug3 & SCD& badLtrBrk) sprintf(DeBugMsg, "1%s", DeBugMsg);
+      if(Bug3 & SCD){
+        //sprintf(DeBugMsg, "1%s", DeBugMsg);
+        int i =0;
+        while(DeBugMsg[i] !=0) i++;
+        DeBugMsg[i] = '1';
+      }
       if (NrmlDah) lastDah = period;
       //lastDah = period;
       CalcAvgDah(lastDah);
@@ -903,6 +970,14 @@ void KeyEvntSR() {
       }
     }
     else { // if(period >= 0.5*avgDit) //This is a typical 'Dit'
+      //if(Bug3 & SCD& badLtrBrk) sprintf(DeBugMsg, "0%s", DeBugMsg);
+      if(Bug3 & SCD){
+        //sprintf(DeBugMsg, "0%s", DeBugMsg);
+        int i =0;
+        while(DeBugMsg[i] !=0) i++;
+        DeBugMsg[i] = '0';
+      }
+      
       lastDit = period;
       dahcnt = 0;
       if (DeCodeVal != 2 ) { // don't recalculate speed based on a single dit (it could have been noise)or a single dah ||(curRatio > 5.0 & period> avgDit )
@@ -1074,6 +1149,7 @@ void Timer_ISR(void) {
     SqlchVal = noise+(0.5*CurNoise);
     SqlchVal = noise+CurNoise;
     if (AvgToneSqlch > SqlchVal) SqlchVal = AvgToneSqlch;
+    //if(Scaning) SqlchVal += SqlchVal;
   }
   else{
     SqlchVal = ManSqlch;
@@ -1107,7 +1183,8 @@ void Timer_ISR(void) {
     Serial.print(SqlchVal);//Gray//Serial.print(AvgToneSqlch);//Gray   
     Serial.print("\t");
   }
-  if (( ToneLvl > SqlchVal)) {
+  
+  if (( ToneLvl > SqlchVal)& !Scaning) {
   //if (( ToneLvl > noise)) {  
     toneDetect = true; 
   } else toneDetect = false;
@@ -1221,14 +1298,42 @@ void Timer_ISR(void) {
   strip.setPixelColor(0, strip.Color(LEDGREEN, LEDRED, LEDBLUE));
   strip.show(); //activate the RGB LED
   // this round of sound processing is complete, so setup to start to collect the next set of samples
+  if(AutoTune) ScanFreq(); // go check to see if the center frequency needs to be adjusted
   ResetGoertzel();
   AvgVal = 0.0;
   OvrLd = false;
   CurCnt = 0;
 } //End Timer2 ISR
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
-
+void ScanFreq(void){ 
+  /*  this routine will start a Sweep the audio tone range by decrementing the Geortzel center frequency when a valid tome has not been heard 
+   *  withn 4 wordbreak intervals since the last usable tone was detected
+   *  if nothing is found at the bottom frquency (500Hz), it jumps back to the top (900 Hz) and starts over
+  */
+  float DltaFreq = 0.0;
+  //if(setupflg) return;
+//  Serial.print(TARGET_FREQUENCYC);
+//  Serial.print('\t');
+//  Serial.println(SqlchVal);
+  if( ToneLvl > SqlchVal){ //We have a valid tone.
+    Scaning = false;  //enable the tonedetect process to allow key closer events.
+    if(magC> magL & magC> magH) return;
+    if(magH> magL) DltaFreq = +2.5;
+    else DltaFreq = -2.5;
+  } else {
+    if((millis()-noSigStrt) > 5*wordBrk){
+       DltaFreq = -20.0;
+      Scaning = true;  //lockout the tonedetect process while we move to a new frequency; to prevent false key closer events while in the frequency hunt mode
+    }
+  }
+  if(DltaFreq == 0.0) return;//Go back; Nothing needs fixing
+  TARGET_FREQUENCYC += DltaFreq;
+  if(TARGET_FREQUENCYC < 500) TARGET_FREQUENCYC =900.0;// start over( back to the top frequency); reached bottom of the frequency range 
+  CalcFrqParams(TARGET_FREQUENCYC);
+}
+//////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup() {
+  //delay(5000);
   //setup Digital signal output pin
   pinMode(DataOutPin, OUTPUT);
   digitalWrite(DataOutPin, HIGH);
@@ -1243,6 +1348,7 @@ void setup() {
   DFault.ManSqlch = ManSqlch; 
   DFault.NoiseSqlch = NoiseSqlch;
   DFault.DeBug = DeBug;
+  DFault.AutoTune = AutoTune;
   int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
   if(StrdFREQUENCY !=0 && n == 4){
     TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
@@ -1276,10 +1382,7 @@ void setup() {
   if(n == 1){
     NoiseSqlch = StrdTFVal;
   }
-  InitGoertzel();
-  coeff = coeffC;
-  N = NC;
-
+  
   n = EEPROM_read(EEaddress+24, StrdintVal);
   if(StrdintVal > 0 && n == 4){
     DeBug = StrdintVal;
@@ -1289,6 +1392,19 @@ void setup() {
   if(StrdVal > 0 && n == 4){
     NSF = StrdVal;
   }
+
+  n = EEPROM_read(EEaddress+32, StrdTFVal);
+  if( n == 1){
+    byte tstval = byte(StrdTFVal)&1;// inserted this and the next line in an attempt to flush out a bad stored value
+    StrdTFVal = bool(tstval);
+//    Serial.println(StrdTFVal);
+    AutoTune = StrdTFVal;
+    
+  }
+  
+  InitGoertzel();
+  coeff = coeffC;
+  N = NC;
 
   switch (DeBug) {
     case 0:
@@ -1379,6 +1495,7 @@ void setup() {
   }
   dispMsg(Title);
   wordBrk = ((5 * wordBrk) + 4 * avgDeadSpace) / 6;
+  sprintf(DeBugMsg, "");
   //End CW Decoder Setup
 }
 
@@ -1417,13 +1534,15 @@ void loop()
         if(btnPrsdCnt == 10){
           SwMode = true;
           //Serial.println("Status Area");
-          if (statsMode == 0) {
-            statsMode = 1;
-            //Serial.println("SET statsMode =1");
-          } else {
-            statsMode = 0;
-            //Serial.println("SET statsMode =0");
-          }
+//          if (statsMode == 0) {
+//            statsMode = 1;
+//            //Serial.println("SET statsMode =1");
+//          } else {
+//            statsMode = 0;
+//            //Serial.println("SET statsMode =0");
+//          }
+          statsMode++;
+          if(statsMode >2) statsMode = 0;
           showSpeed();  
         }
         else btnPrsdCnt = 10;
@@ -1476,151 +1595,211 @@ void loop()
 //////////////////////////////////////////////////////////////////////////
 
 void setuploop(){
-  bool setupflg = true;
   bool saveflg = false;
   buttonEnabled = true;
   int loopcnt = 100;
-  int LEDLpcnt = 100;
+  int LEDLpcnt = 1;
   float StrdDimFctr = 0;
-  //Exit Button position parameters
-  int ExitX = 130;
-  int ExitWdth = 80;
-  int ExitHght = 40;
-  int ExitY = scrnHeight - (ExitHght + 5);//195;
-  if (scrnWidth == 480){
-    ExitX = ExitX + 32;
-//    SaveX = SaveX + 32;
-  }
-    //Save Button parameters
-  int SaveX = ExitX +ExitWdth +1;
-  int SaveWdth = ExitWdth;
-  int SaveY = ExitY;
-  int SaveHght = ExitHght;
-
-  //IncFreq Button parameters
-  int IncFrqX = SaveX+SaveWdth+1;
-  int IncFrqWdth = 80;
-  int IncFrqHght = 40;
-  int IncFrqY = scrnHeight - (ExitHght+IncFrqHght + 5);
-
-  //DecFreq Button parameters
-  int DecFrqX =  ExitX-(80+1);
-  int DecFrqWdth = 80;
-  int DecFrqHght = 40;
-  int DecFrqY = scrnHeight - (ExitHght+DecFrqHght + 5);
-
-//IncLED Button parameters
-  int IncLEDX = IncFrqX+IncFrqWdth+1;
-  int IncLEDWdth = 80;
-  int IncLEDHght = 40;
-  int IncLEDY = IncFrqY-IncLEDHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
-
-  //DecLED Button parameters
-  int DecLEDX = ExitX-((2*80)+1);
-  int DecLEDWdth = 80;
-  int DecLEDHght = 40;
-  int DecLEDY = IncFrqY-DecLEDHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
-
-
-  //IncTone Scale Factor Button Position parameters
-  int IncTONEX = IncLEDX;
-  int IncTONEWdth = 80;
-  int IncTONEHght = 40;
-  int IncTONEY = IncLEDY-IncTONEHght;//scrnHeight - (ExitHght+IncFrqHght + 5);
-
-  //DecTone Scale Factor Button Position  parameters
-  int DecTONEX = DecLEDX;
-  int DecTONEWdth = 80;
-  int DecTONEHght = 40;
-  int DecTONEY = IncLEDY-DecTONEHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
-
-  //IncNoise Scale Factor Button Position parameters
-  int IncNOISEWdth = 80;
-  int IncNOISEHght = 40;
-  int IncNOISEX = IncTONEX-(IncNOISEWdth+1);
-  int IncNOISEY = IncLEDY-IncNOISEHght;
+  int btnHght = 40;
+  int btnWdthS = 80;
+  int btnWdthL = 2*btnWdthS;
+  int row0 = scrnHeight - (btnHght + 5);
+  int row1 = scrnHeight - (2*btnHght + 5);
+  int row2 = scrnHeight - (3*btnHght + 5);
+  int row3 = scrnHeight - (4*btnHght + 5);
+  int row4 = scrnHeight - (5*btnHght + 5);
+  int col0 = 0;
+  int col1 = btnWdthS+1;
+  int col2 = col1 + btnWdthS+1;
+  int col3 = col2+ btnWdthS+1;
+  int col4 = col3+ btnWdthS+1;
+  int col5 = col4+ btnWdthS+1;
+  char BtnCaptn[14];
+  char BtnCaptn1[14];
+  char BtnCaptn2[14];
+  BtnParams SetUpBtns[18]; //currently the Setup screen has 18 buttons
+ 
   
-  //DecNoise Scale Factor Button Position  parameters
-  int DecNOISEWdth = 80;
-  int DecNOISEHght = 40;
-  int DecNOISEX = DecTONEX+(DecTONEWdth+1);
-  int DecNOISEY = IncLEDY-DecNOISEHght;
+  //Exit Button 0
+  SetUpBtns[0].BtnXpos = col2;//130;  //Button X position
+  SetUpBtns[0].BtnWdth = btnWdthS;//80;  //Button Width
+  SetUpBtns[0].BtnHght =btnHght;
+  SetUpBtns[0].BtnYpos = row0;// scrnHeight - (SetUpBtns[0].BtnHght + 5);  //Button Y position
+  SetUpBtns[0].Captn = "Exit";
+  SetUpBtns[0].BtnClr = YELLOW; 
+  SetUpBtns[0].TxtClr = WHITE;
+//  //Exit Button position parameters
+  SetUpBtns[1].BtnXpos = col3;//SetUpBtns[0].BtnXpos+ SetUpBtns[0].BtnWdth+1;  //Button X position
+  SetUpBtns[1].BtnWdth = btnWdthS;//SetUpBtns[0].BtnWdth;  //Button Width
+  SetUpBtns[1].BtnHght = btnHght;//SetUpBtns[0].BtnHght;
+  SetUpBtns[1].BtnYpos = row0;//SetUpBtns[0].BtnYpos;  //Button Y position
+  SetUpBtns[1].Captn = "Save";
+  SetUpBtns[1].BtnClr = GREEN; 
+  SetUpBtns[1].TxtClr = WHITE;
 
-  //IncBIAS Button parameters
-  int IncBIASX = IncLEDX;
-  int IncBIASWdth = 80;
-  int IncBIASHght = 40;
-  int IncBIASY = IncTONEY-IncBIASHght;
+  //IncFreq Button parameters Button 2
+  SetUpBtns[2].BtnXpos = col4;//SetUpBtns[1].BtnXpos+SetUpBtns[1].BtnWdth+1;  //Button X position
+  SetUpBtns[2].BtnWdth = 80;  //Button Width
+  SetUpBtns[2].BtnHght = 40;
+  SetUpBtns[2].BtnYpos = row1;//scrnHeight - (SetUpBtns[0].BtnHght + SetUpBtns[2].BtnHght + 5);  //Button Y position
+  SetUpBtns[2].Captn = "Freq+";
+  SetUpBtns[2].BtnClr = BLUE; 
+  SetUpBtns[2].TxtClr = WHITE;
 
-  //DecBIAS Button parameters
-  int DecBIASX = DecLEDX;
-  int DecBIASWdth = 80;
-  int DecBIASHght = 40;
-  int DecBIASY = IncTONEY-DecBIASHght;//scrnHeight - (ExitHght+DecFrqHght + 5);
+  //DecFreq Button parameters Button 3
+  SetUpBtns[3].BtnXpos = col1;//SetUpBtns[0].BtnXpos-(80+1);  //Button X position
+  SetUpBtns[3].BtnWdth = 80;  //Button Width
+  SetUpBtns[3].BtnHght = 40;
+  SetUpBtns[3].BtnYpos = row1;//scrnHeight - (SetUpBtns[0].BtnHght+SetUpBtns[3].BtnHght + 5);  //Button Y position
+  SetUpBtns[3].Captn = "Freq-";
+  SetUpBtns[3].BtnClr = BLUE; 
+  SetUpBtns[3].TxtClr = WHITE;
 
-  //IncSQLCH Button parameters
-  int IncSQLCHWdth = 80;
-  int IncSQLCHHght = 40;
-  int IncSQLCHX = IncBIASX-(IncSQLCHWdth+1);
-  int IncSQLCHY =IncBIASY;//scrnHeight - (ExitHght+IncFrqHght + 5);
+//IncLED Button parameters Button 4
+  SetUpBtns[4].BtnXpos = col5;//SetUpBtns[2].BtnXpos+SetUpBtns[2].BtnWdth+1;  //Button X position
+  SetUpBtns[4].BtnWdth = 80;  //Button Width
+  SetUpBtns[4].BtnHght = 40;
+  SetUpBtns[4].BtnYpos = row2;//SetUpBtns[2].BtnYpos-SetUpBtns[4].BtnHght;  //Button Y position
+  SetUpBtns[4].Captn = "LED +";
+  SetUpBtns[4].BtnClr = BLUE; 
+  SetUpBtns[4].TxtClr = WHITE;
 
-  //DecSQLCH Button parameters
-  int DecSQLCHWdth = 80;
-  int DecSQLCHHght = 40;
-  int DecSQLCHX = DecBIASX+(DecBIASWdth+1);
-  int DecSQLCHY = DecBIASY;//scrnHeight - (ExitHght+DecFrqHght + 5);
+  //DecLED Button parameters  Button 5
+  SetUpBtns[5].BtnXpos = col0;//SetUpBtns[0].BtnXpos-((2*80)+1);  //Button X position
+  SetUpBtns[5].BtnWdth = 80;  //Button Width
+  SetUpBtns[5].BtnHght = 40;
+  SetUpBtns[5].BtnYpos = row2;//SetUpBtns[2].BtnYpos-SetUpBtns[5].BtnHght;  //Button Y position
+  SetUpBtns[5].Captn = "LED -";
+  SetUpBtns[5].BtnClr = BLUE; 
+  SetUpBtns[5].TxtClr = WHITE;
 
-  //SqMode Button parameters
-  int SqModeWdth = 160;
-  int SqModeHght = 40;
-  int SqModeX = DecSQLCHX+(DecSQLCHWdth+1);
-  int SqModeY =DecTONEY;
+  //IncTone Scale Factor Button Position parameters Button 6
+  SetUpBtns[6].BtnXpos = col5;//SetUpBtns[4].BtnXpos;  //Button X position
+  SetUpBtns[6].BtnWdth = 80;  //Button Width
+  SetUpBtns[6].BtnHght = 40;
+  SetUpBtns[6].BtnYpos = row3;//SetUpBtns[5].BtnYpos-SetUpBtns[6].BtnHght;  //Button Y position
+  SetUpBtns[6].Captn = "TSF +";
+  SetUpBtns[6].BtnClr = RED; 
+  SetUpBtns[6].TxtClr = WHITE;
 
-  //Dfault Button parameters
-  int DfaultWdth = 160;
-  int DfaultHght = 40;
-  int DfaultX = DecSQLCHX+(DecSQLCHWdth+1);
-  int DfaultY =DecLEDY;
+  
 
-  //DeBug Button parameters
-  int DeBugWdth = 160;
-  int DeBugHght = 40;
-  int DeBugX = DecFrqX+(DecFrqWdth+1);
-  int DeBugY =DecFrqY;
+  //DecTone Scale Factor Button Position  parameters Button 7
+  SetUpBtns[7].BtnXpos = col0;//SetUpBtns[5].BtnXpos;  //Button X position
+  SetUpBtns[7].BtnWdth = 80;  //Button Width
+  SetUpBtns[7].BtnHght = 40;
+  SetUpBtns[7].BtnYpos = row3;//SetUpBtns[4].BtnYpos - SetUpBtns[7].BtnHght;  //Button Y position
+  SetUpBtns[7].Captn = "TSF -";
+  SetUpBtns[7].BtnClr = RED; 
+  SetUpBtns[7].TxtClr = WHITE;
+
+
+  //IncNoise Scale Factor Button Position parameters Button 8
+  SetUpBtns[8].BtnWdth = 80;  //Button Width
+  SetUpBtns[8].BtnHght = 40;
+  SetUpBtns[8].BtnXpos = col4;//SetUpBtns[6].BtnXpos-(SetUpBtns[8].BtnWdth+1);  //Button X position
+  SetUpBtns[8].BtnYpos = row3;//SetUpBtns[4].BtnYpos-SetUpBtns[8].BtnHght;  //Button Y position
+  SetUpBtns[8].Captn = "NSF +";
+  SetUpBtns[8].BtnClr = RED; 
+  SetUpBtns[8].TxtClr = WHITE;
+  
+  //DecNoise Scale Factor Button Position  parameters Button 9
+  SetUpBtns[9].BtnWdth = 80;  //Button Width
+  SetUpBtns[9].BtnHght = 40;
+  SetUpBtns[9].BtnXpos = col1;//SetUpBtns[7].BtnXpos+(SetUpBtns[7].BtnWdth+1);  //Button X position
+  SetUpBtns[9].BtnYpos = row3;//SetUpBtns[4].BtnYpos-SetUpBtns[9].BtnHght;  //Button Y position
+  SetUpBtns[9].Captn = "NSF -";
+  SetUpBtns[9].BtnClr = RED; 
+  SetUpBtns[9].TxtClr = WHITE;
+
+  //IncBIAS Button parameters Button 10
+  SetUpBtns[10].BtnXpos = col5;  //Button X position
+  SetUpBtns[10].BtnWdth = btnWdthS;  //Button Width
+  SetUpBtns[10].BtnHght = btnHght;
+  SetUpBtns[10].BtnYpos = row4;  //Button Y position
+  SetUpBtns[10].Captn = "BIAS+";
+  SetUpBtns[10].BtnClr = YELLOW; 
+  SetUpBtns[10].TxtClr = WHITE;
+
+  //DecBIAS Button parameters Button 11
+  SetUpBtns[11].BtnXpos = col0;  //Button X position
+  SetUpBtns[11].BtnWdth = btnWdthS;  //Button Width
+  SetUpBtns[11].BtnHght = btnHght;
+  SetUpBtns[11].BtnYpos = row4;  //Button Y position
+  SetUpBtns[11].Captn = "BIAS-";
+  SetUpBtns[11].BtnClr = YELLOW; 
+  SetUpBtns[11].TxtClr = WHITE;
+
+  //IncSQLCH Button parameters Button 12
+  SetUpBtns[12].BtnXpos = col4;  //Button X position
+  SetUpBtns[12].BtnWdth = btnWdthS;  //Button Width
+  SetUpBtns[12].BtnHght = btnHght;
+  SetUpBtns[12].BtnYpos = row4;  //Button Y position
+  SetUpBtns[12].Captn = "MSQL+";
+  SetUpBtns[12].BtnClr = MAGENTA; 
+  SetUpBtns[12].TxtClr = WHITE;  
+    
+  //DecSQLCH Button parameters Button 13
+  SetUpBtns[13].BtnXpos = col1;  //Button X position
+  SetUpBtns[13].BtnWdth = btnWdthS;  //Button Width
+  SetUpBtns[13].BtnHght = btnHght;
+  SetUpBtns[13].BtnYpos = row4;  //Button Y position
+  SetUpBtns[13].Captn = "MSQL-";
+  SetUpBtns[13].BtnClr = MAGENTA; 
+  SetUpBtns[13].TxtClr = WHITE;  
+
+  if (NoiseSqlch) sprintf(BtnCaptn1, "NOISE SQLCH");  
+  else sprintf(BtnCaptn1, " MAN SQLCH");
+  //SqMode Button parameters Button 14
+  SetUpBtns[14].BtnXpos = col2;  //Button X position
+  SetUpBtns[14].BtnWdth = btnWdthL;  //Button Width
+  SetUpBtns[14].BtnHght = btnHght;
+  SetUpBtns[14].BtnYpos = row4;  //Button Y position
+  SetUpBtns[14].Captn = BtnCaptn1;
+  SetUpBtns[14].BtnClr = MAGENTA; 
+  SetUpBtns[14].TxtClr = WHITE;
+
+  //Dfault Button parameters Button 15
+  SetUpBtns[15].BtnXpos = col2;  //Button X position
+  SetUpBtns[15].BtnWdth = btnWdthL;  //Button Width
+  SetUpBtns[15].BtnHght = btnHght;
+  SetUpBtns[15].BtnYpos = row3;  //Button Y position
+  SetUpBtns[15].Captn = "FACTORY VALS";
+  SetUpBtns[15].BtnClr = GREEN; 
+  SetUpBtns[15].TxtClr = WHITE;
+ 
+  
+  //DeBug Button parameters Button 16
+  SetDBgCptn(BtnCaptn);
+  SetUpBtns[16].BtnXpos = col2;  //Button X position
+  SetUpBtns[16].BtnWdth = btnWdthL;  //Button Width
+  SetUpBtns[16].BtnHght = btnHght;
+  SetUpBtns[16].BtnYpos = row2;  //Button Y position
+  SetUpBtns[16].Captn = BtnCaptn;
+  SetUpBtns[16].BtnClr = MAGENTA; 
+  SetUpBtns[16].TxtClr = WHITE;
+
+  //Freq Mode Button parameters Button 17
+  if (AutoTune) sprintf(BtnCaptn2, " AUTO TUNE");  
+  else sprintf(BtnCaptn2, "FREQ LOCKED");
+  SetUpBtns[17].BtnXpos = col2;  //Button X position
+  SetUpBtns[17].BtnWdth = btnWdthL;  //Button Width
+  SetUpBtns[17].BtnHght = btnHght;
+  SetUpBtns[17].BtnYpos = row1;  //Button Y position
+  SetUpBtns[17].Captn = BtnCaptn2;
+  SetUpBtns[17].BtnClr = RED; 
+  SetUpBtns[17].TxtClr = WHITE;
   
   py = 0;
   px = 0;
   tchcnt = 100;
   enableDisplay();
   tft.fillScreen(BLACK);
-  //ExitBtn();
-  DrawBtn(ExitX, ExitWdth, ExitY, ExitHght, "Exit", YELLOW, WHITE);
-  //Draw SaveBtn
-  DrawBtn(SaveX, SaveWdth, SaveY, SaveHght, "Save", GREEN, WHITE);
-  //Frequency Buttons
-  DrawBtn(IncFrqX, IncFrqWdth, IncFrqY, IncFrqHght, "Freq+", BLUE, WHITE);
-  DrawBtn(DecFrqX, DecFrqWdth, DecFrqY, DecFrqHght, "Freq-", BLUE, WHITE);
-  //LED brigthnes Buttons
-  DrawBtn(IncLEDX, IncLEDWdth, IncLEDY, IncLEDHght, "LED +", BLUE, WHITE);
-  DrawBtn(DecLEDX, DecLEDWdth, DecLEDY, DecLEDHght, "LED -", BLUE, WHITE);
-  //Tone Scale Factor Buttons
-  DrawBtn(IncTONEX, IncTONEWdth, IncTONEY, IncTONEHght, "TSF +", RED, WHITE);
-  DrawBtn(DecTONEX, DecTONEWdth, DecTONEY, DecTONEHght, "TSF -", RED, WHITE);
-  //Noise Scale Factor Buttons
-  DrawBtn(IncNOISEX, IncNOISEWdth, IncNOISEY, IncNOISEHght, "NSF +", RED, WHITE);
-  DrawBtn(DecNOISEX, DecNOISEWdth, DecNOISEY, DecNOISEHght, "NSF -", RED, WHITE);
-  //BIAS Buttons
-  DrawBtn(IncBIASX, IncBIASWdth, IncBIASY, IncBIASHght, "BIAS+", YELLOW, WHITE);
-  DrawBtn(DecBIASX, DecBIASWdth, DecBIASY, DecBIASHght, "BIAS-", YELLOW, WHITE);
-  //SQLCH Buttons
-  DrawBtn(IncSQLCHX, IncSQLCHWdth, IncSQLCHY, IncSQLCHHght, "MSQL+", MAGENTA, WHITE);
-  DrawBtn(DecSQLCHX, DecSQLCHWdth, DecSQLCHY, DecSQLCHHght, "MSQL-", MAGENTA, WHITE);
-  DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
-  DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", GREEN, WHITE);
-  DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
+  
+  for(int i=0; i<18; i++) BldBtn(i, SetUpBtns); // Build the SetUp Button Set
   ShwUsrParams();
   delay(1000);
-
+  setupflg = true;
   while(setupflg){ // run inside this loop until user exits setup mode
     //Serial.print("tchcnt: "); Serial.println(tchcnt);
     tchcnt -=1; //decrement "techcnt" by 1
@@ -1637,42 +1816,37 @@ void setuploop(){
       //use the following for Screen orientation set to 1
       py = map(tp.y, TS_BOT, TS_TOP, 0, scrnHeight);
       px = map(tp.x, TS_LEFT, TS_RT, 0, scrnWidth);
-//      Serial.print("tp.z = "); Serial.println(tp.z); 
-//      Serial.print("px: "); Serial.print(px); Serial.print("; SaveX: "); Serial.print(SaveX); Serial.print("; SaveX+SaveWdth: "); Serial.println(SaveX+SaveWdth);
-//      Serial.print("py: "); Serial.print(py); Serial.print("; SaveY: "); Serial.print(SaveY); Serial.print("; SaveY+ExitHght: "); Serial.print(SaveY+SaveHght);
-//      Serial.print("; scrnHeight: "); Serial.println(scrnHeight);
-//      Serial.println("\n\r \n\r");
-      
+
     }
-    if ((px > IncFrqX && px < IncFrqX+IncFrqWdth) && (py > IncFrqY && py < IncFrqY+IncFrqHght)&& buttonEnabled){
-      //buttonEnabled = false;
-      // Inc Feq button was pressed
+    //if ((px > IncFrqX && px < IncFrqX+IncFrqWdth) && (py > IncFrqY && py < IncFrqY+IncFrqHght)&& buttonEnabled){
+    if (BtnActive(2, SetUpBtns, px, py)){ // Inc Feq button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
-        LEDLpcnt = 40000;
+        LEDLpcnt = 20000;
+        Scaning = false;
         //CalcFrqParams(TARGET_FREQUENCYC + 10.0);
         TARGET_FREQUENCYC += 10.0;
         if(TARGET_FREQUENCYC > 901.0) TARGET_FREQUENCYC -= 10.0; 
         CalcFrqParams(TARGET_FREQUENCYC);
+        
       }
     }
 
-    if ((px > DecFrqX && px < DecFrqX+DecFrqWdth) && (py > DecFrqY && py < DecFrqY+DecFrqHght)&& buttonEnabled){
-      //buttonEnabled = false;
-      // Dec Feq button was pressed
-      //CalcFrqParams(TARGET_FREQUENCYC - 10.0);
+    //if ((px > DecFrqX && px < DecFrqX+DecFrqWdth) && (py > DecFrqY && py < DecFrqY+DecFrqHght)&& buttonEnabled){
+    if (BtnActive(3, SetUpBtns, px, py)){ // Dec Feq button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
-        LEDLpcnt = 40000;
+        LEDLpcnt = 20000;
+        Scaning = false;
         TARGET_FREQUENCYC -= 10.0;
         if(TARGET_FREQUENCYC < 499.0) TARGET_FREQUENCYC += 10.0; 
         CalcFrqParams(TARGET_FREQUENCYC);
       }
     }
 
-    if ((px > IncLEDX && px < IncLEDX+IncLEDWdth) && (py > IncLEDY && py < IncLEDY+IncLEDHght)&& buttonEnabled){
+    //if ((px > IncLEDX && px < IncLEDX+IncLEDWdth) && (py > IncLEDY && py < IncLEDY+IncLEDHght)&& buttonEnabled){
+    if (BtnActive(4, SetUpBtns, px, py)){
       // Increment LED button was pressed
-      //buttonEnabled = false;
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
         LEDLpcnt = 20000;
@@ -1683,8 +1857,8 @@ void setuploop(){
       
     }
 
-    if ((px > DecLEDX && px < DecLEDX+DecLEDWdth) && (py > DecLEDY && py < DecLEDY+DecLEDHght)&& buttonEnabled){
-      //buttonEnabled = false;
+    //if ((px > DecLEDX && px < DecLEDX+DecLEDWdth) && (py > DecLEDY && py < DecLEDY+DecLEDHght)&& buttonEnabled){
+    if (BtnActive(5, SetUpBtns, px, py)){
       // Decrement LED button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
@@ -1695,7 +1869,8 @@ void setuploop(){
       }
     }
 
-   if ((px > IncTONEX && px < IncTONEX+IncTONEWdth) && (py > IncTONEY && py < IncTONEY+IncTONEHght)&& buttonEnabled){
+   //if ((px > IncTONEX && px < IncTONEX+IncTONEWdth) && (py > IncTONEY && py < IncTONEY+IncTONEHght)&& buttonEnabled){
+   if (BtnActive(6, SetUpBtns, px, py)){
       // Increment TONE Scale Factor button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
@@ -1707,7 +1882,8 @@ void setuploop(){
       
     }
 
-    if ((px > DecTONEX && px < DecTONEX+DecTONEWdth) && (py > DecTONEY && py < DecTONEY+DecTONEHght)&& buttonEnabled){
+    //if ((px > DecTONEX && px < DecTONEX+DecTONEWdth) && (py > DecTONEY && py < DecTONEY+DecTONEHght)&& buttonEnabled){
+    if (BtnActive(7, SetUpBtns, px, py)){
       // Decrement TONE Scale Factor button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
@@ -1718,7 +1894,8 @@ void setuploop(){
       }
     }
 
-   if ((px > IncNOISEX && px < IncNOISEX+IncNOISEWdth) && (py > IncNOISEY && py < IncNOISEY+IncNOISEHght)&& buttonEnabled){
+   //if ((px > IncNOISEX && px < IncNOISEX+IncNOISEWdth) && (py > IncNOISEY && py < IncNOISEY+IncNOISEHght)&& buttonEnabled){
+   if (BtnActive(8, SetUpBtns, px, py)){
       // Increment NOISE Scale Factor button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
@@ -1730,7 +1907,8 @@ void setuploop(){
       
     }
 
-    if ((px > DecNOISEX && px < DecNOISEX+DecNOISEWdth) && (py > DecNOISEY && py < DecNOISEY+DecNOISEHght)&& buttonEnabled){
+    //if ((px > DecNOISEX && px < DecNOISEX+DecNOISEWdth) && (py > DecNOISEY && py < DecNOISEY+DecNOISEHght)&& buttonEnabled){
+    if (BtnActive(9, SetUpBtns, px, py)){
       // Decrement NOISE Scale Factor button was pressed
       LEDLpcnt -=1;
       if(LEDLpcnt ==0){
@@ -1742,7 +1920,8 @@ void setuploop(){
     }    
 
 
-    if ((px > IncBIASX && px < IncBIASX+IncBIASWdth) && (py > IncBIASY && py < IncBIASY+IncBIASHght)&& buttonEnabled){
+    //if ((px > IncBIASX && px < IncBIASX+IncBIASWdth) && (py > IncBIASY && py < IncBIASY+IncBIASHght)&& buttonEnabled){
+    if (BtnActive(10, SetUpBtns, px, py)){
       // Increment BIAS button was pressed
       //buttonEnabled = false;
       LEDLpcnt -=1;
@@ -1754,7 +1933,8 @@ void setuploop(){
       }
     }
 
-    if ((px > DecBIASX && px < DecBIASX+DecBIASWdth) && (py > DecBIASY && py < DecBIASY+DecBIASHght)&& buttonEnabled){
+    //if ((px > DecBIASX && px < DecBIASX+DecBIASWdth) && (py > DecBIASY && py < DecBIASY+DecBIASHght)&& buttonEnabled){
+    if (BtnActive(11, SetUpBtns, px, py)){
       //buttonEnabled = false;
       // Decrement BIAS button was pressed
       LEDLpcnt -=1;
@@ -1766,7 +1946,8 @@ void setuploop(){
       }
     }
 
-    if ((px > IncSQLCHX && px < IncSQLCHX+IncSQLCHWdth) && (py > IncSQLCHY && py < IncSQLCHY+IncSQLCHHght)&& buttonEnabled){
+    //if ((px > IncSQLCHX && px < IncSQLCHX+IncSQLCHWdth) && (py > IncSQLCHY && py < IncSQLCHY+IncSQLCHHght)&& buttonEnabled){
+    if (BtnActive(12, SetUpBtns, px, py)){  
       // Increment SQLCH button was pressed
       //buttonEnabled = false;
       LEDLpcnt -=1;
@@ -1778,7 +1959,8 @@ void setuploop(){
       }
     }
 
-    if ((px > DecSQLCHX && px < DecSQLCHX+DecSQLCHWdth) && (py > DecSQLCHY && py < DecSQLCHY+DecSQLCHHght)&& buttonEnabled){
+    //if ((px > DecSQLCHX && px < DecSQLCHX+DecSQLCHWdth) && (py > DecSQLCHY && py < DecSQLCHY+DecSQLCHHght)&& buttonEnabled){
+    if (BtnActive(13, SetUpBtns, px, py)){
       //buttonEnabled = false;
       // Decrement SQLCH button was pressed
       LEDLpcnt -=1;
@@ -1790,32 +1972,41 @@ void setuploop(){
       }
     }
 
-    if ((px > SqModeX && px < SqModeX+SqModeWdth) && (py > SqModeY && py < SqModeY+SqModeHght)&& buttonEnabled){
+    //if ((px > SqModeX && px < SqModeX+SqModeWdth) && (py > SqModeY && py < SqModeY+SqModeHght)&& buttonEnabled){
+    if (BtnActive(14, SetUpBtns, px, py) && buttonEnabled){
       // SQLCH Mode button was pressed
       buttonEnabled = false;
-      //LEDLpcnt -=1;
-      //if(LEDLpcnt ==0){
-      //  LEDLpcnt = 20000;
-        NoiseSqlch = !NoiseSqlch;
-        DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
-        ShwUsrParams();
-      //}
+      NoiseSqlch = !NoiseSqlch;
+      //DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
+      if (NoiseSqlch) sprintf(BtnCaptn1, "NOISE SQLCH");  
+      else sprintf(BtnCaptn1, " MAN SQLCH");
+      SetUpBtns[14].Captn = BtnCaptn1;
+      BldBtn(14, SetUpBtns);
+      ShwUsrParams();
+     
     }
 
-    if ((px > DeBugX && px < DeBugX+DeBugWdth) && (py > DeBugY && py < DeBugY+DeBugHght)&& buttonEnabled){
+    //if ((px > DeBugX && px < DeBugX+DeBugWdth) && (py > DeBugY && py < DeBugY+DeBugHght)&& buttonEnabled){
+    if (BtnActive(16, SetUpBtns, px, py) && buttonEnabled){
       // Debug Mode button was pressed
       buttonEnabled = false;
       DeBug +=1;
       if(DeBug ==3) DeBug = 0;
-      DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
+      SetDBgCptn(BtnCaptn);
+      SetUpBtns[16].Captn = BtnCaptn;
+      BldBtn(16, SetUpBtns);
+      //DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
       ShwUsrParams();
       
     }
 
-    if ((px > DfaultX && px < DfaultX+DfaultWdth) && (py > DfaultY && py < DfaultY+DfaultHght)&& buttonEnabled){
+    //if ((px > DfaultX && px < DfaultX+DfaultWdth) && (py > DfaultY && py < DfaultY+DfaultHght)&& buttonEnabled){
+    if (BtnActive(15, SetUpBtns, px, py) && buttonEnabled){
       // Restore Defaults button was pressed
       buttonEnabled = false;
-      DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", BLACK, WHITE);
+      SetUpBtns[15].BtnClr = BLACK;
+      BldBtn(15, SetUpBtns);
+      //DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", BLACK, WHITE);
       DimFctr = DFault.DimFctr;
       TSF = DFault.TSF;
       NSF = DFault.NSF; 
@@ -1823,23 +2014,58 @@ void setuploop(){
       DeBug = DFault.DeBug; 
       ManSqlch = DFault.ManSqlch; 
       NoiseSqlch = DFault.NoiseSqlch;
-      DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
-      DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
+      AutoTune = DFault.AutoTune;
+      //DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
+      if (NoiseSqlch) sprintf(BtnCaptn1, "NOISE SQLCH");  
+      else sprintf(BtnCaptn1, " MAN SQLCH");
+      SetUpBtns[14].Captn = BtnCaptn1;
+      BldBtn(14, SetUpBtns);
+      //DrwDBModeBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght);
+      SetDBgCptn(BtnCaptn);
+      SetUpBtns[16].Captn = BtnCaptn;
+      BldBtn(16, SetUpBtns);
+      if (AutoTune) sprintf(BtnCaptn2, " AUTO TUNE");  
+      else sprintf(BtnCaptn2, "FREQ LOCKED");
+      SetUpBtns[17].Captn = BtnCaptn2;
+      BldBtn(17, SetUpBtns);
       ShwUsrParams();
       delay(150);
-      DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", GREEN, WHITE);
+      SetUpBtns[15].BtnClr = GREEN;
+      BldBtn(15, SetUpBtns);
+      //DrawBtn(DfaultX, DfaultWdth, DfaultY, DfaultHght, "FACTORY VALS", GREEN, WHITE);
       //}
     }
-    if ((px > ExitX && px < ExitX+ExitWdth) && (py > ExitY && py < ExitY+ExitHght)&& buttonEnabled){
+
+    if (BtnActive(17, SetUpBtns, px, py) && buttonEnabled){
+      // SQLCH Mode button was pressed
+      buttonEnabled = false;
+      AutoTune = !AutoTune;
+      Serial.println(AutoTune);
+      //DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
+      if (AutoTune) sprintf(BtnCaptn2, " AUTO TUNE");  
+      else sprintf(BtnCaptn2, "FREQ LOCKED");
+      SetUpBtns[17].Captn = BtnCaptn2;
+      BldBtn(17, SetUpBtns);
+      py = 0;
+      px = 0;
+      //ShwUsrParams();
+     
+    }
+    
+    //if ((px > ExitX && px < ExitX+ExitWdth) && (py > ExitY && py < ExitY+ExitHght)&& buttonEnabled){
+    if (BtnActive(0, SetUpBtns, px, py) && buttonEnabled){  
       buttonEnabled = false;
       setupflg = false;// exit button was pressed
     }
-    if ((px > SaveX && px < SaveX+SaveWdth) && (py > SaveY && py < SaveY+SaveHght)&& buttonEnabled){
+    //if ((px > SaveX && px < SaveX+SaveWdth) && (py > SaveY && py < SaveY+SaveHght)&& buttonEnabled){
+    if (BtnActive(1, SetUpBtns, px, py)&& buttonEnabled){  
       buttonEnabled = false;
       saveflg = true;
       // Save button was pressed. So store current User params to virtual EEPROM (STM flash memory)
       //Draw SaveBtn
-      DrawBtn(SaveX, SaveWdth, SaveY, SaveHght, "Save", BLACK, WHITE); // make "SAVE" button "BLACK" to confirm button press  
+      // make "SAVE" button "BLACK" to give a visual confirmation of button press
+      SetUpBtns[1].BtnClr = BLACK;
+      BldBtn(1, SetUpBtns);  
       float NewToneFreq = TARGET_FREQUENCYC;
       int n= EEPROM_write(EEaddress+0, NewToneFreq);
       StrdDimFctr = DimFctr;
@@ -1850,11 +2076,13 @@ void setuploop(){
       n = EEPROM_write(EEaddress+20, NoiseSqlch);
       n = EEPROM_write(EEaddress+24, DeBug);
       n = EEPROM_write(EEaddress+28, NSF);
+      n = EEPROM_write(EEaddress+32, AutoTune);
       //Serial.print("N: ");Serial.print(n);
   
       delay(250);
-      //Draw SaveBtn
-      DrawBtn(SaveX, SaveWdth, SaveY, SaveHght, "Save", GREEN, WHITE);
+      //ReDraw SaveBtn
+      SetUpBtns[1].BtnClr = GREEN;
+      BldBtn(1, SetUpBtns);
     }
     loopcnt -=1;
     if (loopcnt == 0){
@@ -1864,83 +2092,33 @@ void setuploop(){
       char StatMsg[40];
       sprintf( StatMsg, "Tone Mag: %d", (long)mag );
       ShwData(cursorX, cursorY, StatMsg);
-//      cursorX = 0;
-//      cursorY = 2 * (fontH + 10);
-//      int TSFintval = (int)TSF;
-//      int TSFfract = 100*(TSF-TSFintval);
-//      sprintf( StatMsg, "TSF: %d.%d", TSFintval, TSFfract);
-//      ShwData(cursorX, cursorY, StatMsg);
-//
-//      cursorX = 0;
-//      cursorY = 3 * (fontH + 10);
-//      sprintf( StatMsg, "BIAS: %d", BIAS);
-//      ShwData(cursorX, cursorY, StatMsg);
-
-      //noise  
-      //cursorX =  16 * (fontW+4);//scrnWidth/2;
-      //cursorY = 2 * (fontH + 10);
       sprintf( StatMsg, "Noise: %d", (long)noise);
       ShwData(16 *fontW, cursorY, StatMsg);
       
 
     }// end if(loopcnt == 0)
   }//End While Loop
-  int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
-  if(StrdFREQUENCY !=0 && n == 4){
-    TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
-    TARGET_FREQUENCYL = feqlratio*StrdFREQUENCY; //Hz
-    TARGET_FREQUENCYH = feqhratio*StrdFREQUENCY; //Hz
-    InitGoertzel();
-    coeff = coeffC;
-    N = NC;
-  }
-  StrdDimFctr = 0;
-  n = EEPROM_read(EEaddress+4, StrdDimFctr);
-  if(StrdDimFctr > 0 && n == 4){
-    DimFctr = StrdDimFctr;
-  }
+//  int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
+//  if(StrdFREQUENCY !=0 && n == 4){
+//    TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
+//    TARGET_FREQUENCYL = feqlratio*StrdFREQUENCY; //Hz
+//    TARGET_FREQUENCYH = feqhratio*StrdFREQUENCY; //Hz
+//    InitGoertzel();
+//    coeff = coeffC;
+//    N = NC;
+//  }
+//  StrdDimFctr = 0;
+//  n = EEPROM_read(EEaddress+4, StrdDimFctr);
+//  if(StrdDimFctr > 0 && n == 4){
+//    DimFctr = StrdDimFctr;
+//  }
   SftReset();
   SetRtnflg = true;
   return;
 }//end of SetUp Loop
 
 //////////////////////////////////////////////////////////////////////////
-void DrwSQModeBtn(int SqModeX, int SqModeWdth, int SqModeY, int SqModeHght){
-  if (NoiseSqlch){
-    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, "NOISE SQLCH", MAGENTA, WHITE);  
-  }
-  else{
-    DrawBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght, " MAN SQLCH", MAGENTA, WHITE);
-  }  
-}
-////////////////////////////////////////////////////////////////////////////
 
-void DrwDBModeBtn(int DeBugX, int DeBugWdth, int DeBugY, int DeBugHght){
-  char textMsg[15];
-  switch(DeBug){
-    case 0:
-      TonPltFlg = false;
-      Test = false;
-      sprintf(textMsg, " DEBUG Off");
-      break;  
-    case 1:
-      TonPltFlg = true;
-      Test = false;
-      sprintf(textMsg, " DEBUG Plot");
-      break;
-    case 2:
-      TonPltFlg = false;
-      Test = true;
-      sprintf(textMsg, "DEBUG Decode");
-      break;
-    default:
-      sprintf(textMsg, "DB Val: %d", DeBug);
-      break;
-        
-  }
-  DrawBtn(DeBugX, DeBugWdth, DeBugY, DeBugHght, textMsg, MAGENTA, WHITE);
-        
-}
 void ShwData(int MsgX, int MsgY, char* TxtMsg){
       //Serial.println(StatMsg);
       int msgpntr = 0;
@@ -1983,7 +2161,7 @@ void CalcFrqParams(float NewToneFreq){
   coeff = coeffC;
   N = NC;
   // now Display current freq
-  ShwUsrParams();
+  if(setupflg && !Scaning)ShwUsrParams();
 }
 //////////////////////////////////////////////////////////////////////////
 
@@ -2045,7 +2223,23 @@ void DrawBtn(int Bposx, int Bwidth, int Bposy, int Bheight, const char* Captn, u
 
 }
 
-///////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+void BldBtn(int BtnNo, BtnParams Btns[]){ //, const char* Captn, unsigned int BtnClr, unsigned int TxtClr){
+  tft.fillRect(Btns[BtnNo].BtnXpos, Btns[BtnNo].BtnYpos, Btns[BtnNo].BtnWdth, Btns[BtnNo].BtnHght, Btns[BtnNo].BtnClr);
+  tft.drawRect(Btns[BtnNo].BtnXpos, Btns[BtnNo].BtnYpos, Btns[BtnNo].BtnWdth, Btns[BtnNo].BtnHght, WHITE);
+  tft.setCursor(Btns[BtnNo].BtnXpos + 11, Btns[BtnNo].BtnYpos + 12);
+  tft.setTextColor(Btns[BtnNo].TxtClr);
+  tft.setTextSize(2);
+  tft.print(Btns[BtnNo].Captn);
+
+}
+///////////////////////////////////////////////////////////////////////////
+bool BtnActive(int BtnNo, BtnParams Btns[], int px, int py){
+  bool actv = false;
+  if ((px > Btns[BtnNo].BtnXpos && px < Btns[BtnNo].BtnXpos+Btns[BtnNo].BtnWdth) && (py > Btns[BtnNo].BtnYpos && py < Btns[BtnNo].BtnYpos+Btns[BtnNo].BtnHght)) actv = true;
+  return actv;
+}
+///////////////////////////////////////////////////////////////////////////
 
 void  SftReset(){
   buttonEnabled = false; //Disable button
@@ -2140,7 +2334,7 @@ void SetLtrBrk(void)
   if (!LtrBrkFlg) return;
 // Just detected the start of a new keyUp event
   LtrBrkFlg = false;
-  LtrCntr++;
+  if(Bug3) LtrCntr++;
   for( int i = 9; i>0; i--){
       ShrtBrk[i] =ShrtBrk[i-1];
     }
@@ -2324,7 +2518,11 @@ void SetModFlgs(int ModeVal) {
       BugMode = false;
       Bug2 = false;
       NrmMode = true;
-      if(!Bug3) ShrtBrkA = ltrBrk/2;
+      if(!Bug3){
+        ShrtBrkA = ltrBrk/2;
+        letterBrk1 = millis()-100;//initialize "letterBrk1" so the first "KeyEvntSR()" interupt doesn't generate an absurd value
+        LtrCntr = 0;
+      }
       Bug3 = true;
       break;  
     case 2:
@@ -2365,12 +2563,12 @@ void DisplayChar(unsigned int decodeval) {
     if(pos1<0){
       //sprintf( Msgbuf, "decodeval: %d ", decodeval);//use when debugging Dictionary table(s)
       sprintf( Msgbuf, "*");
-      if(Bug3 & ConcatSymbl){// if we're here using a sloppy code mode concatenated symbol, and came up empty, then maybe we're combining too many dit/dahs into a bundle. So lets back off a bit
-        if(ShrtBrkA> 15) ShrtBrkA -= 10; // allow it to go below 5; otherwise it could flip( unsigned #) and become absurdly large
-        if(SCD){
-          Serial.println(ShrtBrkA);// 20200818 jmh sloppy code debuging
-        }
-      }
+//      if(Bug3 & ConcatSymbl){// if we're here using a sloppy code mode concatenated symbol, and came up empty, then maybe we're combining too many dit/dahs into a bundle. So lets back off a bit
+//        if(ShrtBrkA> 15) ShrtBrkA -= 10; // Don't allow it to go below 5; otherwise it could flip( unsigned #) and become absurdly large
+//        if(SCD){
+//          Serial.println(ShrtBrkA);// 20200818 jmh sloppy code debuging
+//        }
+//      }
       
     }
     else sprintf( Msgbuf, "%s", DicTbl2[pos1] );
@@ -2480,7 +2678,7 @@ void dispMsg(char Msgbuf[50]) {
     }
     if(dletechar){ // we need to erase the last displayed character
       dletechar = false;
-      if(Bug3  & SCD) sprintf( info, " *Replace Last Char* "); //Serial.print("Replace Last Char :");
+      if(Bug3  & SCD) sprintf( info, "*Replace Last Char*"); //Serial.print("Replace Last Char :");
       //first,buzz thru the pgbuf array until we find the the last charater (delete the last character in the pgbuf)
       int TmpPntr = 0;
       while(Pgbuf[TmpPntr]!=0) TmpPntr++;
@@ -2523,83 +2721,23 @@ void dispMsg(char Msgbuf[50]) {
       if(Pgbuf[cnt-(CPL+2)]=='P' & Pgbuf[cnt-(CPL+1)]=='L'  & Pgbuf[cnt-(CPL)]=='L'){ //test for "PD"
         sprintf ( Msgbuf, " %s", "(WELL)"); //"true"; Insert correction "WELL"
       }
-//      Serial.print(Pgbuf[cnt-(CPL+2)]);
-//      Serial.print(Pgbuf[cnt-(CPL+1)]);
-//      Serial.println(Pgbuf[cnt-(CPL)]);
 
-//      if(Bug3  & Pgbuf[cnt-(CPL+1)]=='T'  & Pgbuf[cnt-(CPL)]=='T'){ //test for //& Pgbuf[cnt-(CPL+2)]=='T'
-//        //if( (ShrtBrk[LtrCntr]+5< 1.30*ltrBrk) ){//if( ShrtBrk0+5< ltrBrk){
-//        //if ((ShrtBrk[LtrCntr]+10< 1.5*avgDeadSpace)&(ShrtBrk[LtrCntr]> 0.6*avgDeadSpace)){
-//        if ((1.5* ShrtBrk[LtrCntr]< 1.5*avgDeadSpace)&(ShrtBrk[LtrCntr]> 0.6*avgDeadSpace)){  
-//          ShrtBrkA = 1.5*ShrtBrk[LtrCntr];//ShrtBrkA = ShrtBrk[LtrCntr]+5; //ShrtBrkA = ShrtBrk0+5;
-//        }//else ShrtBrkA = int(1.10*ltrBrk);
-//        // 20200818 jmh sloppy code debuging:
-//      
-//        if(SCD){
-//          Serial.print(LtrCntr);
-//          //Serial.print(ShrtBrkA);//Serial.print(LtBrkSF);
-//          //Serial.print('\t');
-//          Serial.print(" - ");
-//          Serial.print(ShrtBrk[LtrCntr+2]);
-//          Serial.print(" - ");
-//          Serial.print('"');
-//          Serial.print(Pgbuf[cnt-(CPL+2)]);
-//          Serial.print('"');
-//          Serial.print(" - ");
-//          Serial.print(ShrtBrk[LtrCntr+1]);
-//          Serial.print(" - ");
-//          Serial.print('"');
-//          Serial.print(Pgbuf[cnt-(CPL+1)]);
-//          Serial.print('"');
-//          Serial.print(" - ");
-//          Serial.print(ShrtBrk[LtrCntr]);
-//          Serial.print(" - ");
-//          Serial.print('"');
-//          Serial.print(Pgbuf[cnt-(CPL)]);
-//          Serial.print('"');
-//          Serial.print('\t');
-//          Serial.print(ShrtBrkA);
-//          Serial.print('/');
-//          Serial.print(ltrBrk);
-//          Serial.print('\t');
-//          Serial.print(msgpntr);
-//          Serial.print('\t');
-//          Serial.print(cnt);
-//          Serial.print('\t');
-//          Serial.println(xoffset);
-//        
-//          LtrCntr = 0;
-//        } 
-//      }else if(Bug3  & SCD){
-//        Serial.print(LtrCntr);
-//        Serial.print(" - ");
-//        Serial.print(ShrtBrk[LtrCntr]);
-//        Serial.print(" - ");
-//        Serial.print('"');
-//        Serial.print(Pgbuf[cnt-(CPL)]);
-//        Serial.print('"');
-//        Serial.print('\t');
-//        Serial.print(ShrtBrkA);
-//        Serial.print('/');
-//        Serial.print(ltrBrk);
-//        Serial.print('\t');
-//        Serial.print(msgpntr);
-//        Serial.print('\t');
-//        Serial.print(cnt);
-//        Serial.print('\t');
-//        Serial.println(xoffset);
-//        LtrCntr = 0;
-//      }
     }
     //recalculate maximum wait interval to splice decodeval 
     if(Bug3 & (cnt>CPL) & (Pgbuf[cnt-(CPL)]!=' ') ){
       //if ((ShrtBrk[LtrCntr] > 1.5*ShrtBrkA) & (ShrtBrk[LtrCntr] <3* ltrBrk)){
-      if ((ShrtBrk[LtrCntr] > 1.5*ltrBrk) & (ShrtBrk[LtrCntr] <3* ltrBrk)){
-        UsrLtrBrk = (9*UsrLtrBrk+ShrtBrk[LtrCntr])/10;
-        ShrtBrkA =  0.45*UsrLtrBrk; 
-      } else if((info[0] != 0)&(ShrtBrk[LtrCntr]<ShrtBrkA/2) ){// we just processed a spliced character
-        UsrLtrBrk -= 10;
-        ShrtBrkA =  0.45*UsrLtrBrk;
+      //if ((ShrtBrk[LtrCntr] > 1.5*ltrBrk) & (ShrtBrk[LtrCntr] <3* ltrBrk)& (info[0] == 0)){
+      //if ((ShrtBrk[LtrCntr] < 1.2*ltrBrk) & (ShrtBrk[LtrCntr]> ShrtBrkA)& (info[0] == 0)){ // this filter is based on W1AW sent code
+      if ((ShrtBrk[LtrCntr] < 0.6*wordBrk) & (ShrtBrk[LtrCntr]> ShrtBrkA)& (info[0] == 0)){ // this filter is based on Bug sent code  
+        UsrLtrBrk = (6*UsrLtrBrk+ShrtBrk[LtrCntr])/7; //UsrLtrBrk = (9*UsrLtrBrk+ShrtBrk[LtrCntr])/10;
+        ShrtBrkA =  ShrtFctr*UsrLtrBrk;//0.45*UsrLtrBrk; 
+      //} else if((info[0] != 0)&(ShrtBrk[LtrCntr]<ShrtBrkA/2) ){// we just processed a spliced character
+      } else if((info[0] == '*')){// we just processed a spliced character
+        //UsrLtrBrk -= 10;
+        //ShrtBrkA =  0.45*UsrLtrBrk;
+//        if (ShrtBrk[LtrCntr]<ShrtBrkA/3) ShrtFctr -=0.002;
+//        else if(ShrtBrk[LtrCntr]>((33*ShrtBrkA)/50)) ShrtFctr +=0.002;
+//        ShrtBrkA =  ShrtFctr*UsrLtrBrk; 
       }
 //      if((1.2*ShrtBrk[LtrCntr]>ShrtBrkA)&(1.2*ShrtBrk[LtrCntr]<1.2*ltrBrk )){ 
 //        ShrtBrkA = 1.2*ShrtBrk[LtrCntr]; 
@@ -2608,28 +2746,38 @@ void dispMsg(char Msgbuf[50]) {
 //      }
   }
     if(Bug3 & SCD){
-      Serial.print(LtrCntr);
-      Serial.print(" - ");
-      Serial.print(ShrtBrk[LtrCntr]);
-      Serial.print(" - ");
-      Serial.print('\t');
-      Serial.print('"');
-      Serial.print(Pgbuf[cnt-(CPL)]);
-      Serial.print('"');
-      Serial.print('\t');
-      Serial.print(ShrtBrkA);
-      Serial.print('/');
-      Serial.print(ltrBrk);
-      Serial.print('\t');
-      Serial.print(msgpntr);
-      Serial.print('\t');
-      Serial.print(cnt);
-      Serial.print('\t');
-      Serial.print(xoffset);
-      Serial.println(info);
+//      Serial.print(LtrCntr);
+//      Serial.print(" - ");
+//      Serial.print(ShrtBrk[LtrCntr]);
+//      Serial.print(" - ");
+//      Serial.print('\t');
+//      Serial.print('"');
+//      Serial.print(Pgbuf[cnt-(CPL)]);
+//      Serial.print('"');
+//      Serial.print('\t');
+//      Serial.print(ShrtBrkA);
+//      Serial.print('/');
+//      Serial.print(ltrBrk);
+//      Serial.print('\t');
+//      Serial.print(msgpntr);
+//      Serial.print('\t');
+//      Serial.print(cnt);
+//      Serial.print('\t');
+//      Serial.print(xoffset);
+      char info1[50];
+      sprintf(info1, "{%s}\t%s",DeBugMsg, info);
+      if(info[0] == '*') info[0] = '^';//change the info to make it recognizable when the replacement characters are part the same group
+      //for( int i = 0; i<100; i++) DeBugMsg[i] = 0;
+      char str_ShrtFctr[6];
+      sprintf(str_ShrtFctr,"%d.%d", int(ShrtFctr), int(1000*ShrtFctr)); 
+      sprintf(DeBugMsg, "%d %d \t%c%c%c %d/%d/%d/%d/%s  \t%d\t%d \t%s ",LtrCntr, ShrtBrk[LtrCntr],'"', Pgbuf[cnt-(CPL)],'"', ShrtBrkA, ltrBrk, wordBrk, UsrLtrBrk, str_ShrtFctr, cnt, xoffset, info1);
+//      Serial.println(info);
+      Serial.println(DeBugMsg);
       LtrCntr = 0;
+      for( int i = 0; i<100; i++) DeBugMsg[i] = 0;
+      //sprintf(DeBugMsg, "");
    }
-
+//    if(Bug3 & SCD) sprintf(DeBugMsg, "0%s", DeBugMsg);   
 //    if (Test & cnt>CPL+1 & curRow > 0){
 //      Serial.print("Pgbuf Vals: ");
 //      Serial.print(Pgbuf[cnt-(CPL+2)]);
@@ -2769,17 +2917,20 @@ void showSpeed(){
   int ratioDecml = (int)((curRatio - ratioInt) * 10);
   chkStatsMode = true;
   //if (SwMode && buttonEnabled) SwMode = false;
-  if (statsMode == 0) {
-    //  sprintf ( buf,"%d/%d.%d/%d", wpm, ratioInt, ratioDecml, avgDeadSpace );
+  switch (statsMode){
+  case 0:
     sprintf ( buf, "%d/%d.%d WPM", wpm, ratioInt, ratioDecml);
-    //  sprintf ( buf,"%d",wordBrk);
-  }
-  else {
+    break;
+  case 1:
     sprintf ( buf, "%d", avgDit);
     sprintf ( buf, "%s/%d", buf, avgDah);
     sprintf ( buf, "%s/%d", buf, avgDeadSpace );
-    //    sprintf ( buf,"%s/%d",buf, ltrBrk);
+    break;
+  case 2:
+    sprintf ( buf, "FREQ: %dHz", int(TARGET_FREQUENCYC));
+    break;
   }
+    
   //now, only update/refresh status area of display, if info has changed
   int ptr = 0;
   unsigned long chksum = 0;
