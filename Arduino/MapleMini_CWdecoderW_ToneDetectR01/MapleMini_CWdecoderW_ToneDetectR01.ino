@@ -95,7 +95,7 @@ int BIAS = 2000;  //BluePill 1987 MapleMine 2000
 #define LED_BUILTIN PC13  //Blue Pill Pin
 #define MicPin PB1
 #endif
-bool TonPltFlg = true;// false;//used to control Arduino plotting (via) the USB serial port; To enable, don't modify here, but modify in the sketch
+bool TonPltFlg = false;//used to control Arduino plotting (via) the USB serial port; To enable, don't modify here, but modify in the sketch
 bool Test = false;//  true;//  //Controls Serial port printing in the decode character process; To Enable/Disable, modify here
 /*
    Goertzel stuff
@@ -404,7 +404,7 @@ int state = 0;
 int DeBug = 0;
 char DeBugMsg[100];
 
-struct DF_t { float DimFctr; float TSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; float NSF; bool AutoTune;};
+struct DF_t { float DimFctr; float TSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; float NSF; bool AutoTune; float TARGET_FREQUENCYC;};
 struct BtnParams {
    int BtnXpos;  //Button X position
    int BtnWdth;  //Button Width
@@ -1349,6 +1349,7 @@ void setup() {
   DFault.NoiseSqlch = NoiseSqlch;
   DFault.DeBug = DeBug;
   DFault.AutoTune = AutoTune;
+  DFault.TARGET_FREQUENCYC = TARGET_FREQUENCYC;
   int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
   if(StrdFREQUENCY !=0 && n == 4){
     TARGET_FREQUENCYC = StrdFREQUENCY; //Hz
@@ -1441,8 +1442,8 @@ void setup() {
   scrnHeight = tft.height();
   scrnWidth = tft.width();
   displayW = scrnWidth;
-  Serial.print("scrnHeight: ");
-  Serial.println(scrnHeight);
+  //Serial.print("scrnHeight: ");
+  //Serial.println(scrnHeight);
   // PORTRAIT is 240 x 320 2.8" inch Screen
   if (scrnHeight == 240) { //we are using a 3.5 inch screen
     px = 0; //mapped 'x' display touch value
@@ -2015,6 +2016,7 @@ void setuploop(){
       ManSqlch = DFault.ManSqlch; 
       NoiseSqlch = DFault.NoiseSqlch;
       AutoTune = DFault.AutoTune;
+      TARGET_FREQUENCYC = DFault.TARGET_FREQUENCYC;
       //DrwSQModeBtn(SqModeX, SqModeWdth, SqModeY, SqModeHght);
       if (NoiseSqlch) sprintf(BtnCaptn1, "NOISE SQLCH");  
       else sprintf(BtnCaptn1, " MAN SQLCH");
