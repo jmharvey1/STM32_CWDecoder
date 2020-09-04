@@ -18,7 +18,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200827";
+char RevDate[9] = "20200903";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -313,6 +313,7 @@ char Title[50];
 char P[13];
 int statsMode = 0;
 bool SCD = true; //Sloppy Code Debugging; if "true", use ide Serial Monitor to see output/results
+bool FrstSymbl = false;
 bool chkStatsMode = true;
 bool SwMode = false;
 bool BugMode = false;//true;//
@@ -402,7 +403,7 @@ int wpm = 0;
 int lastWPM = 0;
 int state = 0;
 int DeBug = 0;
-char DeBugMsg[100];
+char DeBugMsg[150];
 
 struct DF_t { float DimFctr; float TSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; float NSF; bool AutoTune; float TARGET_FREQUENCYC;};
 struct BtnParams {
@@ -790,9 +791,33 @@ void SetDBgCptn(char *textMsg){
       sprintf(textMsg, " DEBUG Off");
       break;  
     case 1:
-      TonPltFlg = true;
+      
       Test = false;
       sprintf(textMsg, " DEBUG Plot");
+      // Graph Geortzel magnitudes
+      Serial.print("FrqH");
+      //Serial.print(magH);//Blue
+      Serial.print("\t");
+      Serial.print("FrqL");
+      //Serial.print(magL);//Red
+      Serial.print("\t");
+      Serial.print("FrqC");
+      //Serial.print(magC);//Green
+      Serial.print("\t");
+  
+      // Control Sigs
+      Serial.print("ToneLvl");//Serial.print(mag);//Serial.print(ToneLvl);//Orange
+      Serial.print("\t");
+      Serial.print("Noise");//Purple
+      Serial.print("\t");
+      Serial.print("SqlchVal");//Gray//Serial.print(AvgToneSqlch);//Gray   
+      Serial.print("\t");
+      Serial.print("KeyState");//Light Blue
+      Serial.print("\t");
+      Serial.print("LtrCmplt");//Black
+      Serial.print("\t");
+      Serial.println("BadLtrBrk");//BLue
+      TonPltFlg = true;
       break;
     case 2:
       TonPltFlg = false;
@@ -832,6 +857,7 @@ void KeyEvntSR() {
     //if( ((ShrtBrk[0] < ShrtBrkA) |(ShrtBrk[0] < ltrBrk/2)) & Bug3){
     if( ((ShrtBrk[0] < ShrtBrkA)) & Bug3){
       badLtrBrk = true; // this flag is just used to drive the "toneplot" graph 
+      
       //go get that last character displayed
       if(cnt>CPL+1){//Pgbuf now has enough data to test for sloppy sending
         char curchar = Pgbuf[cnt-(CPL+1)];
@@ -840,6 +866,7 @@ void KeyEvntSR() {
           if(pos1 != -1){
             DeCodeVal = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
             dletechar = true;
+            FrstSymbl = true;
             ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
 //            if (Test){ // 20200818 jmh sloppy code debuging
 //              Serial.print("bad: ");
@@ -919,6 +946,9 @@ void KeyEvntSR() {
     //period = 0;
     noSigStrt =  millis();//jmh20190717added to prevent an absurd value
     DeCodeVal = 0;
+    dletechar = false;
+    FrstSymbl = false;
+    ConcatSymbl = false;
     return; // overly long key closure; Foregt what you got; Go back, & start looking for a new set of events
   }
   LtrBrkFlg = true; //Arm (enable) SetLtrBrk() routine
@@ -946,15 +976,16 @@ void KeyEvntSR() {
     DeCodeVal = DeCodeVal << 1; //shift the current decode value left one place to make room for the next bit.
     //if (((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah))||(DeCodeVal ==2 & period >= 1.4 * avgDit)) { // it smells like a "Dah".
     bool NrmlDah = false;
-    if ((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah)) NrmlDah = true; 
+    if ((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah)) NrmlDah = true;
+    if ((period >= 1.4 * avgDit)&& Bug3) NrmlDah = true; // if in bug mode we'll let a slightly shorter key closer count as a "Dah". 
     bool NrmlDit = false;
     //if ((period < 1.3 * avgDit)|| (period < 0.4 * avgDah)) NrmlDit = true;
     //if (((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah))||(DeCodeVal ==2 & period >= 1.5 * lastDit)) { // it smells like a "Dah".
-    if ((NrmlDah)||((DeCodeVal ==2) & (period > 1.4 * avgDit)&Bug2)) { // it smells like a "Dah".  
+    if ((NrmlDah)||((DeCodeVal ==2) & (period > 1.4 * avgDit)&& (Bug2 || Bug3))) { // it smells like a "Dah".  
       //JMH added 20020206
       DeCodeVal = DeCodeVal + 1; // it appears to be a "dah' so set the least significant bit to "one"
       //if(Bug3 & SCD& badLtrBrk) sprintf(DeBugMsg, "1%s", DeBugMsg);
-      if(Bug3 & SCD){
+      if(Bug3 && SCD && Test){
         //sprintf(DeBugMsg, "1%s", DeBugMsg);
         int i =0;
         while(DeBugMsg[i] !=0) i++;
@@ -971,19 +1002,32 @@ void KeyEvntSR() {
     }
     else { // if(period >= 0.5*avgDit) //This is a typical 'Dit'
       //if(Bug3 & SCD& badLtrBrk) sprintf(DeBugMsg, "0%s", DeBugMsg);
-      if(Bug3 & SCD){
+      if(Bug3 && SCD && Test){
         //sprintf(DeBugMsg, "0%s", DeBugMsg);
         int i =0;
-        while(DeBugMsg[i] !=0) i++;
+        while(DeBugMsg[i] !=0)i++;
         DeBugMsg[i] = '0';
       }
-      
+      if(FrstSymbl && ((DeCodeVal & 2) == 0)){// FrstSymbl can only be true if we are in Bug3 mode; if (DeCodeVal & 2) == 0, then the last symbol of the preceeding letter was a 'dit'
+        //if we're here then we have recieved 2 'dits' back to back with a large gap between. So assume this is the begining of a new letter/character
+        //put everything back to decoding a 'normal' character
+        DeCodeVal = DeCodeVal>>1;
+//        Serial.print(DeCodeVal);
+//        Serial.print('\t');
+//        Serial.println( DicTbl1[linearSearchBreak(DeCodeVal, CodeVal1, ARSIZE)] );
+        DeCodeVal = 2; 
+        dletechar = false;
+        FrstSymbl = false;
+        ConcatSymbl = false;
+//        Serial.println("RESET");
+      }
       lastDit = period;
       dahcnt = 0;
       if (DeCodeVal != 2 ) { // don't recalculate speed based on a single dit (it could have been noise)or a single dah ||(curRatio > 5.0 & period> avgDit )
         CalcDitFlg = true;
       }
     }
+    FrstSymbl = false;
     period = CalcAvgPrd(period);
     //period = 0;
     return; // ok, we are done with evaluating this usable key event
@@ -1597,6 +1641,7 @@ void loop()
 
 void setuploop(){
   bool saveflg = false;
+  bool NoSigFlg = false;
   buttonEnabled = true;
   int loopcnt = 100;
   int LEDLpcnt = 1;
@@ -1618,6 +1663,8 @@ void setuploop(){
   char BtnCaptn[14];
   char BtnCaptn1[14];
   char BtnCaptn2[14];
+  bool CurSCD = SCD;
+  SCD = false;
   BtnParams SetUpBtns[18]; //currently the Setup screen has 18 buttons
  
   
@@ -2099,6 +2146,11 @@ void setuploop(){
       
 
     }// end if(loopcnt == 0)
+    if( ToneLvl > SqlchVal) NoSigFlg = true;
+    if(NoSigFlg && ( ToneLvl < SqlchVal)) {
+      noSigStrt =  millis();
+      NoSigFlg = false;
+    }
   }//End While Loop
 //  int n= EEPROM_read(EEaddress+0, StrdFREQUENCY);
 //  if(StrdFREQUENCY !=0 && n == 4){
@@ -2116,6 +2168,7 @@ void setuploop(){
 //  }
   SftReset();
   SetRtnflg = true;
+  SCD = CurSCD; //restore SCD flag 
   return;
 }//end of SetUp Loop
 
@@ -2336,10 +2389,12 @@ void SetLtrBrk(void)
   if (!LtrBrkFlg) return;
 // Just detected the start of a new keyUp event
   LtrBrkFlg = false;
-  if(Bug3) LtrCntr++;
-  for( int i = 9; i>0; i--){
+  if(Bug3){
+    if(LtrCntr < 9) LtrCntr++;
+    for( int i = 9; i>0; i--){
       ShrtBrk[i] =ShrtBrk[i-1];
     }
+  }
   //Figure out how much time to allow for a letter break
   if (Bug2) {
     space = ((3 * space) + avgDeadSpace) / 4;
@@ -2553,8 +2608,10 @@ void DisplayChar(unsigned int decodeval) {
 
   if (decodeval == 2 || decodeval == 3) ++TEcnt;
   else TEcnt = 0;
-  if (Test) Serial.print(decodeval);
-  if (Test) Serial.print("\t");
+  if (Test && !Bug3){
+    Serial.print(decodeval);
+    Serial.print("\t");
+  }
   //clear buffer
   for ( int i = 0; i < sizeof(Msgbuf);  ++i )
     Msgbuf[i] = 0;
@@ -2639,7 +2696,7 @@ int linearSrchChr(char val, char arr[ARSIZE][2], int sz)
 
 //////////////////////////////////////////////////////////////////////
 void dispMsg(char Msgbuf[50]) {
-  if (Test) Serial.println(Msgbuf);
+  if (Test && !Bug3) Serial.println(Msgbuf);
   int msgpntr = 0;
   int xoffset = 0;
   char info[25];
@@ -2676,11 +2733,11 @@ void dispMsg(char Msgbuf[50]) {
   while ( Msgbuf[msgpntr] != 0) {
     if((Msgbuf[msgpntr]==' ') & dletechar){
       dletechar = false;
-      if(Bug3  & SCD) Serial.println("Kill Delete");
+      if(Bug3  & SCD && Test) Serial.println("Kill Delete");
     }
     if(dletechar){ // we need to erase the last displayed character
       dletechar = false;
-      if(Bug3  & SCD) sprintf( info, "*Replace Last Char*"); //Serial.print("Replace Last Char :");
+      if(Bug3  && SCD) sprintf( info, "*Replace Last Char*"); //Serial.print("Replace Last Char :");
       //first,buzz thru the pgbuf array until we find the the last charater (delete the last character in the pgbuf)
       int TmpPntr = 0;
       while(Pgbuf[TmpPntr]!=0) TmpPntr++;
@@ -2734,58 +2791,27 @@ void dispMsg(char Msgbuf[50]) {
         UsrLtrBrk = (6*UsrLtrBrk+ShrtBrk[LtrCntr])/7; //UsrLtrBrk = (9*UsrLtrBrk+ShrtBrk[LtrCntr])/10;
         ShrtBrkA =  ShrtFctr*UsrLtrBrk;//0.45*UsrLtrBrk; 
       //} else if((info[0] != 0)&(ShrtBrk[LtrCntr]<ShrtBrkA/2) ){// we just processed a spliced character
-      } else if((info[0] == '*')){// we just processed a spliced character
-        //UsrLtrBrk -= 10;
-        //ShrtBrkA =  0.45*UsrLtrBrk;
-//        if (ShrtBrk[LtrCntr]<ShrtBrkA/3) ShrtFctr -=0.002;
-//        else if(ShrtBrk[LtrCntr]>((33*ShrtBrkA)/50)) ShrtFctr +=0.002;
-//        ShrtBrkA =  ShrtFctr*UsrLtrBrk; 
-      }
-//      if((1.2*ShrtBrk[LtrCntr]>ShrtBrkA)&(1.2*ShrtBrk[LtrCntr]<1.2*ltrBrk )){ 
-//        ShrtBrkA = 1.2*ShrtBrk[LtrCntr]; 
-//      }else if(1.2*ShrtBrk[LtrCntr]<ShrtBrkA){
-//        ShrtBrkA -= 2; 
-//      }
-  }
-    if(Bug3 & SCD){
-//      Serial.print(LtrCntr);
-//      Serial.print(" - ");
-//      Serial.print(ShrtBrk[LtrCntr]);
-//      Serial.print(" - ");
-//      Serial.print('\t');
-//      Serial.print('"');
-//      Serial.print(Pgbuf[cnt-(CPL)]);
-//      Serial.print('"');
-//      Serial.print('\t');
-//      Serial.print(ShrtBrkA);
-//      Serial.print('/');
-//      Serial.print(ltrBrk);
-//      Serial.print('\t');
-//      Serial.print(msgpntr);
-//      Serial.print('\t');
-//      Serial.print(cnt);
-//      Serial.print('\t');
-//      Serial.print(xoffset);
+      } //else if((info[0] == '*')){// we just processed a spliced character
+
+      //}
+
+    }
+    if(Bug3 && SCD && Test){
       char info1[50];
       sprintf(info1, "{%s}\t%s",DeBugMsg, info);
       if(info[0] == '*') info[0] = '^';//change the info to make it recognizable when the replacement characters are part the same group
-      //for( int i = 0; i<100; i++) DeBugMsg[i] = 0;
       char str_ShrtFctr[6];
-      sprintf(str_ShrtFctr,"%d.%d", int(ShrtFctr), int(1000*ShrtFctr)); 
-      sprintf(DeBugMsg, "%d %d \t%c%c%c %d/%d/%d/%d/%s  \t%d\t%d \t%s ",LtrCntr, ShrtBrk[LtrCntr],'"', Pgbuf[cnt-(CPL)],'"', ShrtBrkA, ltrBrk, wordBrk, UsrLtrBrk, str_ShrtFctr, cnt, xoffset, info1);
-//      Serial.println(info);
+      sprintf(str_ShrtFctr,"%d.%d", int(ShrtFctr), int(1000*ShrtFctr));
+      sprintf(DeBugMsg, "%d %d \t%c%c%c %d/%d/%d/%d/%s   \t%d/%d\t  \t%d\t%d \t%s ",LtrCntr, ShrtBrk[LtrCntr],'"', Pgbuf[cnt-(CPL)],'"', ShrtBrkA, ltrBrk, wordBrk, UsrLtrBrk, str_ShrtFctr, cursorX, cursorY,  cnt, xoffset, info1);
       Serial.println(DeBugMsg);
-      LtrCntr = 0;
-      for( int i = 0; i<100; i++) DeBugMsg[i] = 0;
-      //sprintf(DeBugMsg, "");
-   }
-//    if(Bug3 & SCD) sprintf(DeBugMsg, "0%s", DeBugMsg);   
-//    if (Test & cnt>CPL+1 & curRow > 0){
-//      Serial.print("Pgbuf Vals: ");
-//      Serial.print(Pgbuf[cnt-(CPL+2)]);
-//      Serial.print(Pgbuf[cnt-(CPL+1)]);
-//      Serial.println(Pgbuf[cnt-(CPL)]);
-//    }
+      //LtrCntr = 0;
+    }
+    
+    int i = 0;
+    while((DeBugMsg[i] != 0) && (i<150) ){
+      DeBugMsg[i] = 0;
+      i++;
+    }
     msgpntr++;
     cnt++;
     if ((cnt - offset)*fontW >= displayW) {
@@ -2803,7 +2829,9 @@ void dispMsg(char Msgbuf[50]) {
       cursorX = (cnt - offset) * fontW;
       //newRow = false;
     }
+    
   }
+  LtrCntr = 0;
   ChkDeadSpace();
   SetLtrBrk();
   chkChrCmplt();
