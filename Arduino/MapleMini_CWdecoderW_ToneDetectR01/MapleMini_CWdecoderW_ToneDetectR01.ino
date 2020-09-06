@@ -18,7 +18,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200903";
+char RevDate[9] = "20200905";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -537,10 +537,13 @@ static unsigned int CodeVal2[ARSIZE2]={
   42,
   44,
   45,
+  46,
   52,
   54,
   55,
   58,
+  59,
+  61,
   64,
   69,
   70,
@@ -552,7 +555,9 @@ static unsigned int CodeVal2[ARSIZE2]={
   82,
   84,
   86,
+  88,
   89,
+  90,
   91,
   92,
   96,
@@ -566,30 +571,36 @@ static unsigned int CodeVal2[ARSIZE2]={
   121,
   122,
   123,
+  124,
   125,
   126,
   127,
+  138,
   145,
   146,
   148,
   150,
+  156,
   162,
   176,
   178,
-  192,
+  191,
   209,
   211,
   212,
   213,
   216,
+  218,
   232,
   234,
+  240,
   241,
   242,
   243,
   244,
   246,
   248,
+  251,
   283,
   296,
   324,
@@ -601,45 +612,34 @@ static unsigned int CodeVal2[ARSIZE2]={
   443,
   468,
   482,
+  486,
   492,
+  493,
   494,
   500,
+  502,
   510,
   596,
   708,
   716,
+  790,
   832,
   842,
   862,
   899,
   922,
   968,
+  970,
   974,
   1348,
   1480,
+  1785,
   1795,
   1940,
   1942,
-  14752,
-  156,
-  124,
-  493,
-  240,
-  61,
-  88,
-  90,
-  46,
-  6580,
-  251,
-  59,
   6134,
-  502,
-  970,
-  1785,
-  234,
-  138,
-  790,
-  218
+  6580,
+  14752
 };
 
 char DicTbl2[ARSIZE2][5]={
@@ -652,10 +652,13 @@ char DicTbl2[ARSIZE2][5]={
   "<AR>",
   "AD",
   "WA",
+  "AG",
   "ND",
   "<KN>",
   "NO",
   "GN",
+  "TY",
+  "OA",
   "HI",
   "<SK>",
   "SG",
@@ -667,10 +670,11 @@ char DicTbl2[ARSIZE2][5]={
   "AF",
   "AL",
   "86",
-  "89",
+  "AB",
+  "WU",
+  "AC",
   "AY",
   "92",
-  "AMI",
   "THE",
   "CA",
   "TAG",
@@ -682,29 +686,36 @@ char DicTbl2[ARSIZE2][5]={
   "OU",
   "OR",
   "MY",
-  "OK",
+  "OD",
+  "MY",
   "OME",
   "TOO",
+  "VR",
   "FU",
   "UF",
   "UL",
   "UP",
+  "UZ",
   "AVE",
   "WH",
   "PR",
-  "THE",
+  "JO",
   "CU",
   "CW",
+  "CD",
   "CK",
   "YS",
+  "YR",
   "QS",  
   "QR",
+  "OH",
   "OV",
   "OF",
   "OUT",
   "OL",
   "OP",
   "OB",
+  "OY",
   "VY",
   "FB",
   "LL",
@@ -716,45 +727,34 @@ char DicTbl2[ARSIZE2][5]={
   "NOW",
   "MAL",
   "OVE",
+  "OUN",
   "OAD",
+  "OAK",
   "OWN",
   "OKI",
+  "OYE",
   "OON",
   "UAL",
   "WIL",
   "W?",
+  "NING",
   "CHE",
   "CAR",
   "CON",
   "<73>",
   "MUC",
   "OUS",
+  "OUR",
   "OUG",
   "ALL",
   "JUS",
+  "YOU",
   "73",
   "OUL",
   "OUP",
-  "MUCH",
-  "UZ",
-  "OD",
-  "OAK",
-  "OH",
-  "OA",
-  "AB",
-  "AC",
-  "AG",
-  "XYL",
-  "OY",
-  "TY",
   "JOYE",
-  "OYE",
-  "OUR",
-  "YOU",
-  "YR",
-  "VR",
-  "NING",
-  "YR"
+  "XYL",
+  "MUCH"
 };
 
 
@@ -2619,16 +2619,11 @@ void DisplayChar(unsigned int decodeval) {
   pos1 = linearSearchBreak(decodeval, CodeVal1, ARSIZE); // note: decodeval '255' returns SPACE character
   if(pos1<0){// did not find a match in the standard Morse table. So go check the extended dictionary
     pos1 = linearSearchBreak(decodeval, CodeVal2, ARSIZE2);
+//    Serial.print(pos1+1);
+//    Serial.print("\t");
     if(pos1<0){
       //sprintf( Msgbuf, "decodeval: %d ", decodeval);//use when debugging Dictionary table(s)
       sprintf( Msgbuf, "*");
-//      if(Bug3 & ConcatSymbl){// if we're here using a sloppy code mode concatenated symbol, and came up empty, then maybe we're combining too many dit/dahs into a bundle. So lets back off a bit
-//        if(ShrtBrkA> 15) ShrtBrkA -= 10; // Don't allow it to go below 5; otherwise it could flip( unsigned #) and become absurdly large
-//        if(SCD){
-//          Serial.println(ShrtBrkA);// 20200818 jmh sloppy code debuging
-//        }
-//      }
-      
     }
     else sprintf( Msgbuf, "%s", DicTbl2[pos1] );
   }
@@ -2777,8 +2772,17 @@ void dispMsg(char Msgbuf[50]) {
       if(Pgbuf[cnt-(CPL+1)]== 'P'  & Pgbuf[cnt-(CPL)]=='D'){ //test for "PD"
         sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "AND)"); //"true"; Insert preceeding character plus correction "AND"
       }
+      if(Pgbuf[cnt-(CPL+1)]== '6'  & Pgbuf[cnt-(CPL)]=='E'){ //test for "PD"
+        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THE)"); //"true"; Insert preceeding character plus correction "AND"
+      }
+      if(Pgbuf[cnt-(CPL+1)]== '6'  & Pgbuf[cnt-(CPL)]=='A'){ //test for "PD"
+        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THA)"); //"true"; Insert preceeding character plus correction "AND"
+      }
       if(Pgbuf[cnt-(CPL+2)]=='P' & Pgbuf[cnt-(CPL+1)]=='L'  & Pgbuf[cnt-(CPL)]=='L'){ //test for "PD"
         sprintf ( Msgbuf, " %s", "(WELL)"); //"true"; Insert correction "WELL"
+      }
+      if(Pgbuf[cnt-(CPL+2)]=='L' & Pgbuf[cnt-(CPL+1)]=='M'  & Pgbuf[cnt-(CPL)]=='Y'){ //test for "PD"
+        sprintf ( Msgbuf, " %s", "(LOW)"); //"true"; Insert correction "WELL"
       }
 
     }
