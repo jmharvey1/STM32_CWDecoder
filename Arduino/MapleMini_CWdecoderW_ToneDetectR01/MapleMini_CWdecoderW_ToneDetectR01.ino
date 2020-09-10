@@ -1,3 +1,5 @@
+/* REV: 2020-09-08 Greatly streamlined/simiplfied the code (installed yesterday) needed in Bug3 mode to recover key sequence data*/
+/* REV: 2020-09-07 Added to BUG3 mode better management of "backspacing" display when correcting/updating DeCodeVal*/
 /* Rev: 2020-08-27 Reworked "setup" button management, mainly to simplify & streamline the code needed to support them*/
 /* Rev: 2020-08-25  Added "ScanFreq()"  to enable the tone detector to automatically "zero in" on the CW Audio tone (500 - 900 Hz) */
 /* Rev: 2020-08-22  New "Bug1" Mode; uses "Key Down" event to manage/set "decodeval" value. */
@@ -18,7 +20,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200905";
+char RevDate[9] = "20200908";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -336,6 +338,7 @@ int unsigned ModeCntRef = 0;
 int msgcntr = 0;
 int badCodeCnt = 0;
 int dahcnt =0;
+int MsgChrCnt[2];
 char newLine = '\n';
 
 //volatile bool state = LOW;
@@ -361,6 +364,8 @@ volatile int TimeDatBuf[24];
 int TDBptr = 0;
 volatile unsigned int CodeValBuf[7];
 volatile unsigned int DeCodeVal;
+volatile unsigned int DCVStrd[2];//used by Bug3 to recover last recored DeCodeVal;
+
 volatile unsigned int OldDeCodeVal;
 long avgDit = 80; //average 'Dit' duration
 unsigned long avgDah = 240; //average 'Dah' duration
@@ -377,9 +382,10 @@ volatile unsigned long letterBrk1 = 0;
 volatile unsigned long OldltrBrk = 0;
 unsigned long ShrtBrkA = 0;
 unsigned long UsrLtrBrk = 100; // used to track the average letter break interval
-float ShrtFctr = 0.52;// 0.45; //used in degug3 mode to control what precentage of the current "UsrLtrBrk" interval to use to detect the continuation of the previous character
+float ShrtFctr = 0.48;//0.52;// 0.45; //used in Bug3 mode to control what precentage of the current "UsrLtrBrk" interval to use to detect the continuation of the previous character
 //unsigned long ShrtBrk0 = 0;
-unsigned long ShrtBrk[10];
+//unsigned long ShrtBrk[10];
+int ShrtBrk[10];
 int LtrCntr =0;
 //unsigned long ShrtBrk2 = 0;
 unsigned long AvgLtrBrk = 0;
@@ -403,6 +409,7 @@ int wpm = 0;
 int lastWPM = 0;
 int state = 0;
 int DeBug = 0;
+//int BPtr = 0;
 char DeBugMsg[150];
 
 struct DF_t { float DimFctr; float TSF; int BIAS; long ManSqlch; bool NoiseSqlch; int DeBug; float NSF; bool AutoTune; float TARGET_FREQUENCYC;};
@@ -526,9 +533,10 @@ char DicTbl1[ARSIZE][2]=
     "."
 };
 //Multi character decode values/table(s)
-#define ARSIZE2 112
+#define ARSIZE2 118
 static unsigned int CodeVal2[ARSIZE2]={
   19,
+  28,
   31,
   34,
   38,
@@ -541,6 +549,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   52,
   54,
   55,
+  57,
   58,
   59,
   61,
@@ -584,6 +593,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   162,
   176,
   178,
+  185,
   191,
   209,
   211,
@@ -600,12 +610,14 @@ static unsigned int CodeVal2[ARSIZE2]={
   244,
   246,
   248,
+  249,
   251,
   283,
   296,
   324,
   328,
   360,
+  362,
   364,
   416,
   442,
@@ -632,6 +644,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   970,
   974,
   1348,
+  1451,
   1480,
   1785,
   1795,
@@ -644,6 +657,7 @@ static unsigned int CodeVal2[ARSIZE2]={
 
 char DicTbl2[ARSIZE2][5]={
   "UT",
+  "GE",
   "TO",
   "VE",
   "UN",
@@ -656,6 +670,7 @@ char DicTbl2[ARSIZE2][5]={
   "ND",
   "<KN>",
   "NO",
+  "MU",
   "GN",
   "TY",
   "OA",
@@ -699,6 +714,7 @@ char DicTbl2[ARSIZE2][5]={
   "AVE",
   "WH",
   "PR",
+  "WX",
   "JO",
   "CU",
   "CW",
@@ -715,12 +731,14 @@ char DicTbl2[ARSIZE2][5]={
   "OL",
   "OP",
   "OB",
+  "OX",
   "OY",
   "VY",
   "FB",
   "LL",
   "RRI",
   "WAS",
+  "WAR",
   "AYI",
   "CH",
   "NOR",
@@ -747,6 +765,7 @@ char DicTbl2[ARSIZE2][5]={
   "OUR",
   "OUG",
   "ALL",
+  "WARM",
   "JUS",
   "YOU",
   "73",
@@ -845,40 +864,114 @@ void KeyEvntSR() {
     deadSpace = STart - noSigStrt;
     OldltrBrk = letterBrk;
     // 20200818 jmh following 3 lines to support sloppy code debuging
-//    for( int i = 9; i>0; i--){
-//      ShrtBrk[i] =ShrtBrk[i-1];
-//    }
-    ShrtBrk[0] = STart - letterBrk1;
-    //LtrCntr++;
-//    Serial.print(STart - letterBrk1);
-//    Serial.print("\t");
-//    Serial.println(ltrBrk);
+    ShrtBrk[0] = int(STart - letterBrk1);
+    //Serial.println(ShrtBrk[0]);
 // test to detect sloppy sender timing, if "true" this keydown event appears to be a continuation of previous character
-    //if( ((ShrtBrk[0] < ShrtBrkA) |(ShrtBrk[0] < ltrBrk/2)) & Bug3){
-    if( ((ShrtBrk[0] < ShrtBrkA)) & Bug3){
+    //if( (ShrtBrk[0] < ShrtBrkA) && Bug3 && (cnt>CPL+1)){
+    if( (ShrtBrk[0] < ShrtBrkA) && Bug3){ // think I fixed needing to wait until we're on the 2nd line of the display "&& (cnt>CPL+1)"
       badLtrBrk = true; // this flag is just used to drive the "toneplot" graph 
-      
-      //go get that last character displayed
-      if(cnt>CPL+1){//Pgbuf now has enough data to test for sloppy sending
-        char curchar = Pgbuf[cnt-(CPL+1)];
-        if(curchar != ' '){// don't do anything if the last character displayed was space
-          int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
-          if(pos1 != -1){
-            DeCodeVal = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
+      //test to make sure that the last letter received has actually been processed 
+      int BPtr = 0;
+      while(CodeValBuf[BPtr] != 0) {
+        DeCodeVal = CodeValBuf[BPtr];
+//        Serial.print(BPtr);
+//        Serial.print('\t');
+//        Serial.print(CodeValBuf[BPtr]);
+//        Serial.print('\t');
+        ++BPtr;
+      }
+      if(BPtr>0) CodeValBuf[BPtr] = 99999;
+      if(DeCodeVal == 0){//Last letter received was posted to the screen
+        //go get that last character displayed
+//        Serial.print("cnt: ");
+//        Serial.println(cnt);
+//        if(cnt>CPL+1){//Pgbuf now has enough data to recover sloppy sending results
+          if(MsgChrCnt[1] >0){
+            DeCodeVal = DCVStrd[1];
             dletechar = true;
             FrstSymbl = true;
-            ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
-//            if (Test){ // 20200818 jmh sloppy code debuging
-//              Serial.print("bad: ");
-//              Serial.print(curchar); 
-//              Serial.print("\t");
-//              Serial.print(pos1);
-//              Serial.print("\t");
-//              Serial.println(DeCodeVal);
-//            }
+            ConcatSymbl = true;// used to verify (at the next letter break we did the right thing;
           }
-        }
+//          char curchar;
+//          if(MsgChrCnt[1] == 2){
+//            Serial.println("Last DeCodeVal generated Multiple Characters");
+//            int DCV1;
+//            curchar = Pgbuf[cnt-(CPL+2)];
+//            if(curchar != ' '){// don't do anything if the last character displayed was space
+//              int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
+//              if(pos1 != -1){
+//                DCV1 = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
+//                dletechar = true;
+//                FrstSymbl = true;
+//                ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
+////                Serial.print("DCV1: ");
+////                Serial.print(DCV1);
+////                Serial.print('\t');
+//                curchar = Pgbuf[cnt-(CPL+1)];
+//                if(curchar != ' '){// don't do anything if the last character displayed was space
+//                  int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
+//                  if(pos1 != -1){
+//                    int DCV2 = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
+//                    int MSB = 1;
+//                    int sfhtcnt = 0;
+//    //                Serial.print("DCV2: ");
+//    //                Serial.print(DCV2);
+//    //                Serial.print('\t');
+//                    while(DCV2 > MSB){ 
+//                      MSB = MSB<<1;
+//                      ++sfhtcnt;
+//                    }
+//                    int fltr = 0;
+//                    for( int i = 0; i< sfhtcnt-1 ; ++i){
+//                      fltr = fltr<<1;
+//                      ++fltr;
+//                    }
+//                    DCV2 = DCV2&fltr;
+//    //                Serial.print(DCV2);
+//    //                Serial.print('\t');
+//    //                Serial.print("sfhtcnt: ");
+//    //                Serial.print(sfhtcnt);
+//    //                Serial.print('\t');
+//    //                Serial.print("fltr: ");
+//    //                Serial.print(fltr);
+//    //                Serial.print('\t');
+//                    DCV1 = DCV1 <<(sfhtcnt-1);
+//                    DeCodeVal = DCV1+DCV2;
+//    //                Serial.print("DeCodeVal: ");
+//    //                Serial.println(DeCodeVal); 
+//                    dletechar = true;
+//                    FrstSymbl = true;
+//                    ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
+//        
+//                  }
+//                }
+//              }
+//            }
+//          }
+//          else{ //Assume the last DeCodeVal only generated a single character 
+//            char curchar = Pgbuf[cnt-(CPL+1)];
+//            if(curchar != ' '){// don't do anything if the last character displayed was space
+//              int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
+//              if(pos1 != -1){
+//                DeCodeVal = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
+//                dletechar = true;
+//                FrstSymbl = true;
+//                ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
+//    
+//              }
+//            }
+//          }
+//        }
         else badLtrBrk = false;
+      }
+      else{ //abort letter break process
+        if( SCD){
+         Serial.print("Clawed Last Letter Back");
+//         Serial.print('\t');
+//         Serial.print(BPtr);
+         Serial.print('\t');
+         Serial.println(DeCodeVal);
+        } 
       }
     }
     letterBrk = 0;
@@ -1515,6 +1608,8 @@ void setup() {
 //    gxlo  = 238; //button touch reading 3.5" screen
 //    gxhi  = 325; //button touch reading 3.5" screen
    }
+   
+   MsgChrCnt[0] = 0;
 
   DrawButton();
   Button2();
@@ -2600,11 +2695,11 @@ void SetModFlgs(int ModeVal) {
 void DisplayChar(unsigned int decodeval) {
   char curChr = 0 ;
   int pos1 = -1;
-  // slide all values in the CodeValBuf to the left by one position & make sure that the array is terminated with a zero in the last position
-  for (int i = 1; i < 7; i++) {
-    CodeValBuf[i - 1] = CodeValBuf[i];
-  }
-  CodeValBuf[6] = 0;
+//  // slide all values in the CodeValBuf to the left by one position & make sure that the array is terminated with a zero in the last position
+//  for (int i = 1; i < 7; i++) {
+//    CodeValBuf[i - 1] = CodeValBuf[i];
+//  }
+//  CodeValBuf[6] = 0;
 
   if (decodeval == 2 || decodeval == 3) ++TEcnt;
   else TEcnt = 0;
@@ -2616,23 +2711,39 @@ void DisplayChar(unsigned int decodeval) {
   for ( int i = 0; i < sizeof(Msgbuf);  ++i )
     Msgbuf[i] = 0;
   //if((decodeval==255) & dletechar) dletechar = false; // this should be ok to do here, because if decodeval = 255 we will be passing one & only one character over to the "dispMsg()" routine 
-  pos1 = linearSearchBreak(decodeval, CodeVal1, ARSIZE); // note: decodeval '255' returns SPACE character
-  if(pos1<0){// did not find a match in the standard Morse table. So go check the extended dictionary
-    pos1 = linearSearchBreak(decodeval, CodeVal2, ARSIZE2);
-//    Serial.print(pos1+1);
-//    Serial.print("\t");
-    if(pos1<0){
-      //sprintf( Msgbuf, "decodeval: %d ", decodeval);//use when debugging Dictionary table(s)
-      sprintf( Msgbuf, "*");
+  
+  if(decodeval != 99999){
+    DCVStrd[0] = decodeval;
+    pos1 = linearSearchBreak(decodeval, CodeVal1, ARSIZE); // note: decodeval '255' returns SPACE character
+    if(pos1<0){// did not find a match in the standard Morse table. So go check the extended dictionary
+      pos1 = linearSearchBreak(decodeval, CodeVal2, ARSIZE2);
+  //    Serial.print(pos1+1);
+  //    Serial.print("\t");
+      if(pos1<0){
+        //sprintf( Msgbuf, "decodeval: %d ", decodeval);//use when debugging Dictionary table(s)
+        sprintf( Msgbuf, "*");
+        if (Test && Bug3){
+          Serial.print("decodeval: ");
+          Serial.println(decodeval);
+        }
+      }
+      else sprintf( Msgbuf, "%s", DicTbl2[pos1] );
     }
-    else sprintf( Msgbuf, "%s", DicTbl2[pos1] );
-  }
-  else sprintf( Msgbuf, "%s", DicTbl1[pos1] );
-  ConcatSymbl = false;
-  if (Msgbuf[0] == 'E' || Msgbuf[0] == 'T') ++badCodeCnt;
-  else if(decodeval !=255) badCodeCnt = 0;
-  if (badCodeCnt > 5 && wpm > 25){ // do an auto reset back to 15wpm
-    WPMdefault();
+    else sprintf( Msgbuf, "%s", DicTbl1[pos1] );
+    MsgChrCnt[0] = 0;
+    while(Msgbuf[MsgChrCnt[0]] != 0) ++MsgChrCnt[0]; // record how many characters will be printed in this group 
+    /*(normally 1, but the exented dictionary can have many) 
+     * Will use this later if deletes are needed
+     */
+    ConcatSymbl = false;
+    if (Msgbuf[0] == 'E' || Msgbuf[0] == 'T') ++badCodeCnt;
+    else if(decodeval !=255) badCodeCnt = 0;
+    if (badCodeCnt > 5 && wpm > 25){ // do an auto reset back to 15wpm
+      WPMdefault();
+    }
+  }else{
+    sprintf( Msgbuf, "");
+    dletechar = true;
   }
   if (((cnt) - offset)*fontW >= displayW) {
     ;//if ((cnt -(curRow*LineLen) == LineLen)){
@@ -2654,6 +2765,11 @@ void DisplayChar(unsigned int decodeval) {
       avgDit = avgDah / 3;
     }
   }
+  // slide all values in the CodeValBuf to the left by one position & make sure that the array is terminated with a zero in the last position
+  for (int i = 1; i < 7; i++) {
+    CodeValBuf[i - 1] = CodeValBuf[i];
+  }
+  CodeValBuf[6] = 0;
 }
 //////////////////////////////////////////////////////////////////////
 int linearSearchBreak(long val, unsigned int arr[], int sz)
@@ -2698,33 +2814,6 @@ void dispMsg(char Msgbuf[50]) {
   // sprintf(info, "");
   info[0] = 0;
   enableDisplay();
-//  if((Msgbuf[msgpntr]==' ') & dletechar){
-//    dletechar = false;
-//    if(Bug3  & SCD) Serial.println("Kill Delete");
-//  }
-//  if(dletechar){ // we need to erase the last displayed character
-//    dletechar = false;
-//    if(Bug3  & SCD) Serial.print("Replace Last Char :");
-//    //first,buzz thru the pgbuf we find the the last charater (delete the last character in the pgbuf)
-//    while(Pgbuf[msgpntr]!=0) msgpntr++;
-//    Pgbuf[msgpntr-1] =0;
-//    msgpntr =0;
-//    cnt -=1;
-//    int xoffset = cnt;
-//    //use the xoffset to locate the character position (on the display's x axis)
-//    while (xoffset > CPL) xoffset -=CPL;
-//    //int Xpos =  xoffset*(fontW);
-//    cursorX  =  xoffset*(fontW);
-//    //Check to see if the last character printed to the display generated a new line of text
-//    if(newRow){ // it did, we need to back up one line/row
-//      curRow--;
-//      offset -= CPL;
-//      cursorY = curRow * (fontH + 10);
-//    }
-//    tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK); //black out/erase last displayed character
-//    tft.setCursor(cursorX, cursorY);
-//  }
-//  else tft.setCursor(cursorX, cursorY);
   while ( Msgbuf[msgpntr] != 0) {
     if((Msgbuf[msgpntr]==' ') & dletechar){
       dletechar = false;
@@ -2733,29 +2822,33 @@ void dispMsg(char Msgbuf[50]) {
     if(dletechar){ // we need to erase the last displayed character
       dletechar = false;
       if(Bug3  && SCD) sprintf( info, "*Replace Last Char*"); //Serial.print("Replace Last Char :");
-      //first,buzz thru the pgbuf array until we find the the last charater (delete the last character in the pgbuf)
-      int TmpPntr = 0;
-      while(Pgbuf[TmpPntr]!=0) TmpPntr++;
-      Pgbuf[TmpPntr-1] =0;// delete last character in the array by replacing it with a "0"
-      //TmpPntr =0;
-      cnt--;
-      xoffset = cnt;
-      //use the xoffset to locate the character position (on the display's x axis)
-      //int DelRow = 0;
-      curRow = 0;
-      while (xoffset >= CPL){
-        xoffset -=CPL;
-        //DelRow++;
-        curRow++; 
+      while(MsgChrCnt[1] !=0){// delete display of ever how many characters were printed in the last decodeval (may be more than one letter generated)  
+        //first,buzz thru the pgbuf array until we find the the last charater (delete the last character in the pgbuf)
+        int TmpPntr = 0;
+        while(Pgbuf[TmpPntr]!=0) TmpPntr++;
+        if(TmpPntr>0) Pgbuf[TmpPntr-1] =0;// delete last character in the array by replacing it with a "0"
+        //TmpPntr =0;
+        cnt--;
+        xoffset = cnt;
+        //use the xoffset to locate the character position (on the display's x axis)
+        //int DelRow = 0;
+        curRow = 0;
+        while (xoffset >= CPL){
+          xoffset -=CPL;
+          //DelRow++;
+          curRow++; 
+        }
+        //int Xpos =  xoffset*(fontW);
+        cursorX  =  xoffset*(fontW);
+        //cursorY = DelRow * (fontH + 10);
+        cursorY = curRow * (fontH + 10);
+        if(xoffset==(CPL-1)) offset= offset-CPL; //we just jump back to last letter in the previous line, So we need setup to properly calculate what display row we will be on, come the next character
+        tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK); //black out/erase last displayed character
+        tft.setCursor(cursorX, cursorY);
+        --MsgChrCnt[1];
       }
-      //int Xpos =  xoffset*(fontW);
-      cursorX  =  xoffset*(fontW);
-      //cursorY = DelRow * (fontH + 10);
-      cursorY = curRow * (fontH + 10);
-      if(xoffset==(CPL-1)) offset= offset-CPL; //we just jump back to last letter in the previous line, So we need setup to properly calculate what display row we will be on, come the next character
-      tft.fillRect(cursorX, cursorY, fontW+4, (fontH + 10), BLACK); //black out/erase last displayed character
-      tft.setCursor(cursorX, cursorY);
-    }
+    
+    }//end delete character
     else{
 //      if(newRow & SCD)Serial.println(" newRow Flag Cleared");
 //      newRow = false;
@@ -2763,26 +2856,34 @@ void dispMsg(char Msgbuf[50]) {
     }
     
 
-    
+    MsgChrCnt[1] =MsgChrCnt[0];
+    DCVStrd[1] = DCVStrd[0];// used by the KeyEvntSR()routine to facilitate grabbing back the last key sequence data received
     char curChar = Msgbuf[msgpntr];
     tft.print(curChar);
+    //now test/correct letter groups that represent common mis-prints  
     if (curRow > 0) sprintf ( Pgbuf, "%s%c", Pgbuf, curChar);  // add the character just "printed" to the "PgBuf" 
     
-    if (cnt>CPL){//Pgbuf now has enough data to test for sloppy sending
-      if(Pgbuf[cnt-(CPL+1)]== 'P'  & Pgbuf[cnt-(CPL)]=='D'){ //test for "PD"
+    if (cnt>CPL){//Pgbuf now has enough data, to test for special character combos often found with sloppy sending
+      if(Pgbuf[cnt-(CPL+1)]== 'P'  && Pgbuf[cnt-(CPL)]=='D'){ //test for "PD"
         sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "AND)"); //"true"; Insert preceeding character plus correction "AND"
       }
-      if(Pgbuf[cnt-(CPL+1)]== '6'  & Pgbuf[cnt-(CPL)]=='E'){ //test for "PD"
+      if(Pgbuf[cnt-(CPL+1)]== '6'  && Pgbuf[cnt-(CPL)]=='E'){ //test for "PD"
         sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THE)"); //"true"; Insert preceeding character plus correction "AND"
       }
-      if(Pgbuf[cnt-(CPL+1)]== '6'  & Pgbuf[cnt-(CPL)]=='A'){ //test for "PD"
+      if(Pgbuf[cnt-(CPL+1)]== '6' && Pgbuf[cnt-(CPL)]=='A'){ //test for "PD"
         sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THA)"); //"true"; Insert preceeding character plus correction "AND"
       }
-      if(Pgbuf[cnt-(CPL+2)]=='P' & Pgbuf[cnt-(CPL+1)]=='L'  & Pgbuf[cnt-(CPL)]=='L'){ //test for "PD"
-        sprintf ( Msgbuf, " %s", "(WELL)"); //"true"; Insert correction "WELL"
+      if(Pgbuf[cnt-(CPL+1)]== '9' && Pgbuf[cnt-(CPL)]=='E'){ //test for "9E"
+        sprintf ( Msgbuf,  " (ONE)" ); //"true"; Insert correction "ONE"
       }
-      if(Pgbuf[cnt-(CPL+2)]=='L' & Pgbuf[cnt-(CPL+1)]=='M'  & Pgbuf[cnt-(CPL)]=='Y'){ //test for "PD"
-        sprintf ( Msgbuf, " %s", "(LOW)"); //"true"; Insert correction "WELL"
+      if(Pgbuf[cnt-(CPL+2)]=='P'&& Pgbuf[cnt-(CPL+1)]=='L' && Pgbuf[cnt-(CPL)]=='L'){ //test for "PD"
+        sprintf ( Msgbuf, " (WELL)" ); //"true"; Insert correction "WELL"
+      }
+      if((Pgbuf[cnt-(CPL+2)]=='N' || Pgbuf[cnt-(CPL+2)]=='L') && Pgbuf[cnt-(CPL+1)]=='M'  && Pgbuf[cnt-(CPL)]=='Y'){ //test for "PD"
+        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "OW)"); //"true"; Insert correction "NOW"/"LOW"
+      }
+      if(Pgbuf[cnt-(CPL+2)]=='T'&& Pgbuf[cnt-(CPL+1)]=='T' && Pgbuf[cnt-(CPL)]=='O'){ //test for "PD"
+        sprintf ( Msgbuf, "  (0)"); //"true"; Insert correction "TTO" = "0"
       }
 
     }
@@ -2792,7 +2893,7 @@ void dispMsg(char Msgbuf[50]) {
       //if ((ShrtBrk[LtrCntr] > 1.5*ltrBrk) & (ShrtBrk[LtrCntr] <3* ltrBrk)& (info[0] == 0)){
       //if ((ShrtBrk[LtrCntr] < 1.2*ltrBrk) & (ShrtBrk[LtrCntr]> ShrtBrkA)& (info[0] == 0)){ // this filter is based on W1AW sent code
       if ((ShrtBrk[LtrCntr] < 0.6*wordBrk) & (ShrtBrk[LtrCntr]> ShrtBrkA)& (info[0] == 0)){ // this filter is based on Bug sent code  
-        UsrLtrBrk = (6*UsrLtrBrk+ShrtBrk[LtrCntr])/7; //UsrLtrBrk = (9*UsrLtrBrk+ShrtBrk[LtrCntr])/10;
+        UsrLtrBrk = (5*UsrLtrBrk+ShrtBrk[LtrCntr])/6; //(6*UsrLtrBrk+ShrtBrk[LtrCntr])/7; //(9*UsrLtrBrk+ShrtBrk[LtrCntr])/10;
         ShrtBrkA =  ShrtFctr*UsrLtrBrk;//0.45*UsrLtrBrk; 
       //} else if((info[0] != 0)&(ShrtBrk[LtrCntr]<ShrtBrkA/2) ){// we just processed a spliced character
       } //else if((info[0] == '*')){// we just processed a spliced character
