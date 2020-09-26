@@ -20,7 +20,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200908";
+char RevDate[9] = "20200926";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -314,7 +314,7 @@ char Msgbuf[50];
 char Title[50];
 char P[13];
 int statsMode = 0;
-bool SCD = true; //Sloppy Code Debugging; if "true", use ide Serial Monitor to see output/results
+bool SCD = true; //false;//true; //Sloppy Code Debugging; if "true", use ide Serial Monitor to see output/results
 bool FrstSymbl = false;
 bool chkStatsMode = true;
 bool SwMode = false;
@@ -328,6 +328,8 @@ bool LtrBrkFlg = true;
 bool NuWrd = true;
 bool NuWrdflg = false;
 bool SetRtnflg = false;
+unsigned long AvgShrtBrk = 0;
+unsigned long AvgShrtBrk1 = 0;
 int unsigned ClrBtnCnt = 0;
 int unsigned ModeBtnCnt = 0; 
 int unsigned ModeCnt = 0; // used to cycle thru the 4 decode modes (norm, bug1, bug2, bug3)
@@ -387,6 +389,7 @@ float ShrtFctr = 0.48;//0.52;// 0.45; //used in Bug3 mode to control what precen
 //unsigned long ShrtBrk[10];
 int ShrtBrk[10];
 int LtrCntr =0;
+int OldLtrPntr =0;
 //unsigned long ShrtBrk2 = 0;
 unsigned long AvgLtrBrk = 0;
 volatile unsigned long ltrBrk = 0;
@@ -533,7 +536,7 @@ char DicTbl1[ARSIZE][2]=
     "."
 };
 //Multi character decode values/table(s)
-#define ARSIZE2 118
+#define ARSIZE2 122
 static unsigned int CodeVal2[ARSIZE2]={
   19,
   28,
@@ -571,6 +574,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   92,
   96,
   105,
+  106,
   110,
   113,
   114,
@@ -593,8 +597,10 @@ static unsigned int CodeVal2[ARSIZE2]={
   162,
   176,
   178,
+  180,
   185,
   191,
+  202,
   209,
   211,
   212,
@@ -634,6 +640,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   596,
   708,
   716,
+  731,
   790,
   832,
   842,
@@ -692,6 +699,7 @@ char DicTbl2[ARSIZE2][5]={
   "92",
   "THE",
   "CA",
+  "TAR",
   "TAG",
   "GU",
   "GR",
@@ -714,8 +722,10 @@ char DicTbl2[ARSIZE2][5]={
   "AVE",
   "WH",
   "PR",
+  "AND",
   "WX",
   "JO",
+  "TUR",
   "CU",
   "CW",
   "CD",
@@ -755,6 +765,7 @@ char DicTbl2[ARSIZE2][5]={
   "UAL",
   "WIL",
   "W?",
+  "WAY",
   "NING",
   "CHE",
   "CAR",
@@ -869,111 +880,81 @@ void KeyEvntSR() {
 // test to detect sloppy sender timing, if "true" this keydown event appears to be a continuation of previous character
     //if( (ShrtBrk[0] < ShrtBrkA) && Bug3 && (cnt>CPL+1)){
     if( (ShrtBrk[0] < ShrtBrkA) && Bug3){ // think I fixed needing to wait until we're on the 2nd line of the display "&& (cnt>CPL+1)"
-      badLtrBrk = true; // this flag is just used to drive the "toneplot" graph 
-      //test to make sure that the last letter received has actually been processed 
-      int BPtr = 0;
-      while(CodeValBuf[BPtr] != 0) {
-        DeCodeVal = CodeValBuf[BPtr];
-//        Serial.print(BPtr);
-//        Serial.print('\t');
-//        Serial.print(CodeValBuf[BPtr]);
-//        Serial.print('\t');
-        ++BPtr;
+      badLtrBrk = true; // this flag is just used to drive the "toneplot" graph
+      //if(ShrtBrk[0] < 1.1*AvgShrtBrk && (OldLtrPntr ==1)){// added this if condition to detect subtle changes in cadence
+     AvgShrtBrk = (56*ltrBrk)/100;//AvgShrtBrk = (79*ltrBrk)/100;
+     if((ShrtBrk[0] < AvgShrtBrk) || (OldLtrPntr == 1)){
+        //AvgShrtBrk1 = (5*AvgShrtBrk1+ShrtBrk[0])/6;
+        if(Bug3 && SCD && Test){
+           Serial.print("Concatenate  ");
+           Serial.print(OldLtrPntr);
+           Serial.print(" "); 
+           for( int i =0; i <= OldLtrPntr; i++){
+            Serial.print(ShrtBrk[i]);
+            Serial.print(";"); 
+           }
+           //Serial.print(ShrtBrk[0]);
+           Serial.print("  ");
+           Serial.println(AvgShrtBrk);
+         }
+         //AvgShrtBrk = (3*AvgShrtBrk+ShrtBrk[0])/4;// update AvgShrtBrk
+         if(ShrtBrk[0]> UsrLtrBrk/5) AvgShrtBrk = (2*AvgShrtBrk+ShrtBrk[0])/3;// update AvgShrtBrk
+           
+        //test to make sure that the last letter received has actually been processed 
+        int BPtr = 0;
+        while(CodeValBuf[BPtr] != 0) {
+          DeCodeVal = CodeValBuf[BPtr];
+  //        Serial.print(BPtr);
+  //        Serial.print('\t');
+  //        Serial.print(CodeValBuf[BPtr]);
+  //        Serial.print('\t');
+          ++BPtr;
+        }
+        if(BPtr>0) CodeValBuf[BPtr] = 99999;
+        if(DeCodeVal == 0){//Last letter received was posted to the screen
+          //go get that last character displayed
+  //        Serial.print("cnt: ");
+  //        Serial.println(cnt);
+  //        if(cnt>CPL+1){//Pgbuf now has enough data to recover sloppy sending results
+            if(MsgChrCnt[1] >0){
+              DeCodeVal = DCVStrd[1];
+              dletechar = true;
+              FrstSymbl = true;
+              ConcatSymbl = true;// used to verify (at the next letter break we did the right thing;
+            }
+          else badLtrBrk = false;
+        }
+        else{ //abort letter break process
+          if(Bug3 && SCD && Test){
+           Serial.print("Clawed Last Letter Back");
+  //         Serial.print('\t');
+  //         Serial.print(BPtr);
+           Serial.print('\t');
+           Serial.println(DeCodeVal);
+          } 
+        }
       }
-      if(BPtr>0) CodeValBuf[BPtr] = 99999;
-      if(DeCodeVal == 0){//Last letter received was posted to the screen
-        //go get that last character displayed
-//        Serial.print("cnt: ");
-//        Serial.println(cnt);
-//        if(cnt>CPL+1){//Pgbuf now has enough data to recover sloppy sending results
-          if(MsgChrCnt[1] >0){
-            DeCodeVal = DCVStrd[1];
-            dletechar = true;
-            FrstSymbl = true;
-            ConcatSymbl = true;// used to verify (at the next letter break we did the right thing;
+      else{
+        if(Bug3 && SCD && Test){
+          Serial.print("Skip Concat  ");
+          Serial.print(OldLtrPntr);
+          Serial.print(" "); 
+          for( int i =0; i <= OldLtrPntr; i++){
+           Serial.print(ShrtBrk[i]);
+           Serial.print(";"); 
           }
-//          char curchar;
-//          if(MsgChrCnt[1] == 2){
-//            Serial.println("Last DeCodeVal generated Multiple Characters");
-//            int DCV1;
-//            curchar = Pgbuf[cnt-(CPL+2)];
-//            if(curchar != ' '){// don't do anything if the last character displayed was space
-//              int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
-//              if(pos1 != -1){
-//                DCV1 = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
-//                dletechar = true;
-//                FrstSymbl = true;
-//                ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
-////                Serial.print("DCV1: ");
-////                Serial.print(DCV1);
-////                Serial.print('\t');
-//                curchar = Pgbuf[cnt-(CPL+1)];
-//                if(curchar != ' '){// don't do anything if the last character displayed was space
-//                  int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
-//                  if(pos1 != -1){
-//                    int DCV2 = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
-//                    int MSB = 1;
-//                    int sfhtcnt = 0;
-//    //                Serial.print("DCV2: ");
-//    //                Serial.print(DCV2);
-//    //                Serial.print('\t');
-//                    while(DCV2 > MSB){ 
-//                      MSB = MSB<<1;
-//                      ++sfhtcnt;
-//                    }
-//                    int fltr = 0;
-//                    for( int i = 0; i< sfhtcnt-1 ; ++i){
-//                      fltr = fltr<<1;
-//                      ++fltr;
-//                    }
-//                    DCV2 = DCV2&fltr;
-//    //                Serial.print(DCV2);
-//    //                Serial.print('\t');
-//    //                Serial.print("sfhtcnt: ");
-//    //                Serial.print(sfhtcnt);
-//    //                Serial.print('\t');
-//    //                Serial.print("fltr: ");
-//    //                Serial.print(fltr);
-//    //                Serial.print('\t');
-//                    DCV1 = DCV1 <<(sfhtcnt-1);
-//                    DeCodeVal = DCV1+DCV2;
-//    //                Serial.print("DeCodeVal: ");
-//    //                Serial.println(DeCodeVal); 
-//                    dletechar = true;
-//                    FrstSymbl = true;
-//                    ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
-//        
-//                  }
-//                }
-//              }
-//            }
-//          }
-//          else{ //Assume the last DeCodeVal only generated a single character 
-//            char curchar = Pgbuf[cnt-(CPL+1)];
-//            if(curchar != ' '){// don't do anything if the last character displayed was space
-//              int pos1 = linearSrchChr(curchar, DicTbl1, ARSIZE);
-//              if(pos1 != -1){
-//                DeCodeVal = CodeVal1[pos1]; //ok, we found a good match, so reload "DeCodeVal" with that, so we can continue building the character being sent
-//                dletechar = true;
-//                FrstSymbl = true;
-//                ConcatSymbl = true; // used to verify (at the next letter break we did the right thing;
-//    
-//              }
-//            }
-//          }
-//        }
-        else badLtrBrk = false;
-      }
-      else{ //abort letter break process
-        if( SCD){
-         Serial.print("Clawed Last Letter Back");
-//         Serial.print('\t');
-//         Serial.print(BPtr);
-         Serial.print('\t');
-         Serial.println(DeCodeVal);
-        } 
+          //Serial.print(ShrtBrk[0]);
+          Serial.print("  ");
+          Serial.println(AvgShrtBrk);
+        }
+        AvgShrtBrk = (AvgShrtBrk+ShrtBrk[0])/2;// update AvgShrtBrk
+        //AvgShrtBrk = (2*AvgShrtBrk+ShrtBrk[0])/3;// update AvgShrtBrk
+        //AvgShrtBrk = (4*AvgShrtBrk+ShrtBrk[0])/5;// update AvgShrtBrk
       }
     }
+
+
+    
     letterBrk = 0;
     ltrCmplt = -1800; // used in plot mode, to show where/when letter breaks are detected 
     CalcAvgdeadSpace = true;
@@ -1070,7 +1051,7 @@ void KeyEvntSR() {
     //if (((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah))||(DeCodeVal ==2 & period >= 1.4 * avgDit)) { // it smells like a "Dah".
     bool NrmlDah = false;
     if ((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah)) NrmlDah = true;
-    if ((period >= 1.4 * avgDit)&& Bug3) NrmlDah = true; // if in bug mode we'll let a slightly shorter key closer count as a "Dah". 
+    //if ((period >= 1.4 * avgDit)&& Bug3) NrmlDah = true; // if in bug mode we'll let a slightly shorter key closer count as a "Dah". 
     bool NrmlDit = false;
     //if ((period < 1.3 * avgDit)|| (period < 0.4 * avgDah)) NrmlDit = true;
     //if (((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah))||(DeCodeVal ==2 & period >= 1.5 * lastDit)) { // it smells like a "Dah".
@@ -2624,10 +2605,12 @@ void chkChrCmplt() {
 int CalcAvgPrd(int thisdur) {
   
   if(magC<10000) return thisdur; //JMH 02020811 Don't do anything with this period. Signal is too noisy to evaluate
-  if (thisdur > 3.4 * avgDit) thisdur = 3.4 * avgDit; //limit the effect that a single sustained "keydown" event cant have
+  //if (thisdur > 3.4 * avgDit) thisdur = 3.4 * avgDit; //limit the effect that a single sustained "keydown" event can have
+  if (thisdur > 5.4 * avgDit) thisdur = 5.4 * avgDit; //jmh 20200923 raised the limit to speed up the time needed to adjust to slow code
   if (thisdur < 0.5 *avgDah){ // this appears to be a "dit"
     avgDit = (9 * avgDit + thisdur) / 10;
   }
+  else avgDah = ((4*avgDah)+thisdur)/5; //jmh 20200923 added this line to further to reduce the time needed to correct for slow code 
   curRatio = (float)avgDah / (float)avgDit;
   //set limits on the 'avgDit' values
   if (avgDit > 1000) avgDit = 1000;
@@ -2671,11 +2654,14 @@ void SetModFlgs(int ModeVal) {
       Bug2 = false;
       NrmMode = true;
       if(!Bug3){
-        ShrtBrkA = ltrBrk/2;
+        ShrtBrkA = ltrBrk;
         letterBrk1 = millis()-100;//initialize "letterBrk1" so the first "KeyEvntSR()" interupt doesn't generate an absurd value
         LtrCntr = 0;
+        ShrtFctr = 0.48;
+        AvgShrtBrk = ShrtBrkA;//initialize  AvgShrtBrk with a resonable value
       }
       Bug3 = true;
+     
       break;  
     case 2:
       BugMode = true;
@@ -2722,6 +2708,19 @@ void DisplayChar(unsigned int decodeval) {
       if(pos1<0){
         //sprintf( Msgbuf, "decodeval: %d ", decodeval);//use when debugging Dictionary table(s)
         sprintf( Msgbuf, "*");
+//        if (Bug3){
+//          float ShrtFctrold = ShrtFctr;
+//          ShrtFctr = float(float(ltrBrk)/float(UsrLtrBrk));
+//          if(ShrtFctr > ShrtFctrold) ShrtFctr = ShrtFctrold -0.05; // one way or the other we need to reduce "ShrtFctr"
+//          ShrtBrkA =  ShrtFctr*UsrLtrBrk;
+////          AvgShrtBrk = ShrtBrkA;
+//
+////          if( ShrtBrkA < UsrLtrBrk) {// recalibrate the timing settings 
+////            ShrtFctr = float(float(ShrtBrkA)/float(UsrLtrBrk));//ShrtFctr = float(float(ShrtBrk[LtrCntr])/float(UsrLtrBrk));
+////            AvgShrtBrk = ShrtBrk[LtrCntr];
+////            ShrtBrkA =  ShrtFctr*UsrLtrBrk;
+////          }else ShrtFctr -= 0.05;
+//        }
         if (Test && Bug3){
           Serial.print("decodeval: ");
           Serial.println(decodeval);
@@ -2821,7 +2820,7 @@ void dispMsg(char Msgbuf[50]) {
     }
     if(dletechar){ // we need to erase the last displayed character
       dletechar = false;
-      if(Bug3  && SCD) sprintf( info, "*Replace Last Char*"); //Serial.print("Replace Last Char :");
+      if(Bug3 && SCD && Test) sprintf( info, "*Replace Last Char*"); //Serial.print("Replace Last Char :");
       while(MsgChrCnt[1] !=0){// delete display of ever how many characters were printed in the last decodeval (may be more than one letter generated)  
         //first,buzz thru the pgbuf array until we find the the last charater (delete the last character in the pgbuf)
         int TmpPntr = 0;
@@ -2888,13 +2887,37 @@ void dispMsg(char Msgbuf[50]) {
 
     }
     //recalculate maximum wait interval to splice decodeval 
-    if(Bug3 & (cnt>CPL) & (Pgbuf[cnt-(CPL)]!=' ') ){
+    if(Bug3 && curChar != ' '){//if(Bug3 & (cnt>CPL) & (Pgbuf[cnt-(CPL)]!=' ') ){ //JMH 20200925 with current algorithm, no longer need to wait for "Pgbuf" to become active 
       //if ((ShrtBrk[LtrCntr] > 1.5*ShrtBrkA) & (ShrtBrk[LtrCntr] <3* ltrBrk)){
       //if ((ShrtBrk[LtrCntr] > 1.5*ltrBrk) & (ShrtBrk[LtrCntr] <3* ltrBrk)& (info[0] == 0)){
       //if ((ShrtBrk[LtrCntr] < 1.2*ltrBrk) & (ShrtBrk[LtrCntr]> ShrtBrkA)& (info[0] == 0)){ // this filter is based on W1AW sent code
-      if ((ShrtBrk[LtrCntr] < 0.6*wordBrk) & (ShrtBrk[LtrCntr]> ShrtBrkA)& (info[0] == 0)){ // this filter is based on Bug sent code  
+      ltrBrk = (60*UsrLtrBrk)/100; //Jmh 20200925 added this to keep "ltrBrk" at a dynamic/reasonable value with respect to what the sender is doing
+      if( ShrtBrk[LtrCntr]< UsrLtrBrk){// we're working with the last letter received was started before a normal letter break period
+//        if(Pgbuf[cnt-(CPL+1)]=='T'&& Pgbuf[cnt-(CPL)]=='T'){ // we have 2 'T's in a row so increase the "ShrtFctr" a bit
+//          if(ShrtBrk[LtrCntr]> ltrBrk) ShrtFctr = float(float(ShrtBrk[LtrCntr])/float(UsrLtrBrk));
+//          else ShrtFctr = float(float(ltrBrk)/float(UsrLtrBrk));
+        
+          ShrtFctr = float(float(80*ltrBrk)/float(100*UsrLtrBrk));
+          ShrtBrkA = (80*UsrLtrBrk)/100; //ShrtBrkA = (76*UsrLtrBrk)/100; //ShrtBrkA = (88*UsrLtrBrk)/100; //ShrtBrkA = (90*UsrLtrBrk)/100; //ShrtBrkA =  ShrtFctr*UsrLtrBrk;
+//          AvgShrtBrk = ShrtBrkA;
+          
+//        }
+
+//          ShrtFctr += 0.05;
+//          if(Pgbuf[cnt-(CPL+2)]=='T') {// Whoa, Now we have 3 T's in a row, recalibrate the timing settings 
+//           float ShrtFctrold = ShrtFctr;
+//           ShrtFctr = float(float(ShrtBrk[LtrCntr])/float(UsrLtrBrk));
+//           if(ShrtFctr < ShrtFctrold) ShrtFctr = ShrtFctrold;// the new value should have been greater than what we had been using, but not true, so "bumb up" the old value a bit es use it
+//           //ShrtFctr = 2.0*float(float(AvgShrtBrk)/float(UsrLtrBrk));
+//           AvgShrtBrk = ShrtBrk[LtrCntr];
+//           ShrtBrkA =  ShrtFctr*UsrLtrBrk;
+//          }
+//        }
+      }
+      
+      if ((ShrtBrk[LtrCntr] < 0.6*wordBrk) && curChar != ' ' && (info[0] == 0)){ //if ((ShrtBrk[LtrCntr] < 0.6*wordBrk) & (ShrtBrk[LtrCntr]> ShrtBrkA)& (info[0] == 0)){ // this filter is based on Bug sent code  
         UsrLtrBrk = (5*UsrLtrBrk+ShrtBrk[LtrCntr])/6; //(6*UsrLtrBrk+ShrtBrk[LtrCntr])/7; //(9*UsrLtrBrk+ShrtBrk[LtrCntr])/10;
-        ShrtBrkA =  ShrtFctr*UsrLtrBrk;//0.45*UsrLtrBrk; 
+        //ShrtBrkA =  ShrtFctr*UsrLtrBrk;//0.45*UsrLtrBrk; 
       //} else if((info[0] != 0)&(ShrtBrk[LtrCntr]<ShrtBrkA/2) ){// we just processed a spliced character
       } //else if((info[0] == '*')){// we just processed a spliced character
 
@@ -2907,11 +2930,15 @@ void dispMsg(char Msgbuf[50]) {
       if(info[0] == '*') info[0] = '^';//change the info to make it recognizable when the replacement characters are part the same group
       char str_ShrtFctr[6];
       sprintf(str_ShrtFctr,"%d.%d", int(ShrtFctr), int(1000*ShrtFctr));
-      sprintf(DeBugMsg, "%d %d \t%c%c%c %d/%d/%d/%d/%s   \t%d/%d\t  \t%d\t%d \t%s ",LtrCntr, ShrtBrk[LtrCntr],'"', Pgbuf[cnt-(CPL)],'"', ShrtBrkA, ltrBrk, wordBrk, UsrLtrBrk, str_ShrtFctr, cursorX, cursorY,  cnt, xoffset, info1);
+      char Ltr;
+      if(cnt < CPL){
+        Ltr = curChar;
+      }else Ltr = Pgbuf[cnt-(CPL)];
+      sprintf(DeBugMsg, "%d %d \t%c%c%c %d/%d/%d/%d/%s   \t%d/%d\t  \t%d\t%d \t%s ",LtrCntr, ShrtBrk[LtrCntr],'"', Ltr,'"', ShrtBrkA, ltrBrk, wordBrk, UsrLtrBrk, str_ShrtFctr, cursorX, cursorY,  cnt, xoffset, info1);
       Serial.println(DeBugMsg);
       //LtrCntr = 0;
     }
-    
+    OldLtrPntr = LtrCntr;
     int i = 0;
     while((DeBugMsg[i] != 0) && (i<150) ){
       DeBugMsg[i] = 0;
