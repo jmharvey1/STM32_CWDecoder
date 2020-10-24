@@ -1,3 +1,7 @@
+/* REV: 2020-10-23 More tweaks to CalcAvgPrd() to fix bug sent code from creating irrational speed and dah/dit ratios*/
+/* REV: 2020-10-12 Changes to CalcAvgPrd() routine to improve response to external wpm speed changes */
+/* REV: 2020-10-05 Minor changes to "CalcAvgPrd" routine to improve wpm speed correction response times */
+/* REV: 2020-10-03 Tweaked Bug3 code (Key isr) to better diferentiate cadence changes to parse letter breaks. Also locked out the other two bug modes*/
 /* REV: 2020-09-08 Greatly streamlined/simiplfied the code (installed yesterday) needed in Bug3 mode to recover key sequence data*/
 /* REV: 2020-09-07 Added to BUG3 mode better management of "backspacing" display when correcting/updating DeCodeVal*/
 /* Rev: 2020-08-27 Reworked "setup" button management, mainly to simplify & streamline the code needed to support them*/
@@ -20,7 +24,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20200926";
+char RevDate[9] = "20201023";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -153,6 +157,7 @@ int kOld = 0;
 
 float ToneLvl = 0;
 float noise = 0;
+float SNR = 1.0;
 long ManSqlch = 2000;
 float AvgToneSqlch = 0;
 int ToneOnCnt = 0;
@@ -370,6 +375,7 @@ volatile unsigned int DCVStrd[2];//used by Bug3 to recover last recored DeCodeVa
 
 volatile unsigned int OldDeCodeVal;
 long avgDit = 80; //average 'Dit' duration
+long DitVar = 0; //average 'Dit' duration
 unsigned long avgDah = 240; //average 'Dah' duration
 //float avgDit = 80; //average 'Dit' duration
 //float avgDah = 240; //average 'Dah' duration
@@ -398,6 +404,7 @@ volatile unsigned long wordBrk = avgDah ;
 volatile unsigned long wordStrt;
 volatile unsigned long deadTime;
 unsigned long deadSpace = 0;
+unsigned long LastdeadSpace = 0;
 volatile unsigned long MaxDeadTime;
 volatile bool wordBrkFlg = false;
 int charCnt = 0;
@@ -412,6 +419,9 @@ int wpm = 0;
 int lastWPM = 0;
 int state = 0;
 int DeBug = 0;
+int BadDedSpceCnt =0;
+unsigned long AvgBadDedSpce =0;
+unsigned long BadSpceStk[5];
 //int BPtr = 0;
 char DeBugMsg[150];
 
@@ -536,7 +546,7 @@ char DicTbl1[ARSIZE][2]=
     "."
 };
 //Multi character decode values/table(s)
-#define ARSIZE2 122
+#define ARSIZE2 123
 static unsigned int CodeVal2[ARSIZE2]={
   19,
   28,
@@ -626,6 +636,7 @@ static unsigned int CodeVal2[ARSIZE2]={
   362,
   364,
   416,
+  429,
   442,
   443,
   468,
@@ -751,6 +762,7 @@ char DicTbl2[ARSIZE2][5]={
   "WAR",
   "AYI",
   "CH",
+  "CQ",
   "NOR",
   "NOW",
   "MAL",
@@ -1014,7 +1026,7 @@ void KeyEvntSR() {
     } //End if(DeCodeVal!= 0)
 
   }// end of key interrupt processing;
-  // Now, if we are here; the interrupt was a "Key-Up" event. Now its time to decide whether the "Key-Down" period represents a "dit", a "dah", or just garbage.
+  // Now, if we are here; the interrupt was a "Key-Up" event. Now its time to decide whether this last "Key-Down" period represents a "dit", a "dah", or just garbage.
   // 1st check. & throw out key-up events that have durations that represent speeds of less than 5WPM.
   if (period > 720) { //Reset, and wait for the next key closure
     //period = 0;
@@ -1052,6 +1064,12 @@ void KeyEvntSR() {
     bool NrmlDah = false;
     if ((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah)) NrmlDah = true;
     //if ((period >= 1.4 * avgDit)&& Bug3) NrmlDah = true; // if in bug mode we'll let a slightly shorter key closer count as a "Dah". 
+    //else if ((period >= (1.4*avgDit)+(2*DitVar))&& Bug3){  //JMH 20201002 if in bug mode we'll let a slightly shorter key closer count as a "Dah".
+    else if ((period >= (1.4*avgDit)+(DitVar))&& Bug3){
+      NrmlDah = true;
+      Serial.print("DitVar: ");
+      Serial.println(DitVar); 
+    }
     bool NrmlDit = false;
     //if ((period < 1.3 * avgDit)|| (period < 0.4 * avgDah)) NrmlDit = true;
     //if (((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah))||(DeCodeVal ==2 & period >= 1.5 * lastDit)) { // it smells like a "Dah".
@@ -1082,7 +1100,8 @@ void KeyEvntSR() {
         while(DeBugMsg[i] !=0)i++;
         DeBugMsg[i] = '0';
       }
-      if(FrstSymbl && ((DeCodeVal & 2) == 0)){// FrstSymbl can only be true if we are in Bug3 mode; if (DeCodeVal & 2) == 0, then the last symbol of the preceeding letter was a 'dit'
+      //if(FrstSymbl && ((DeCodeVal & 2) == 0)){// FrstSymbl can only be true if we are in Bug3 mode; if (DeCodeVal & 2) == 0, then the last symbol of the preceeding letter was a 'dit'
+      if(FrstSymbl){ //JMH 20201003 New way, doesn't make any difference about the last symbol of the preceeding letter. The first symbol in the current letter is a 'dit', so forget the past
         //if we're here then we have recieved 2 'dits' back to back with a large gap between. So assume this is the begining of a new letter/character
         //put everything back to decoding a 'normal' character
         DeCodeVal = DeCodeVal>>1;
@@ -1099,6 +1118,9 @@ void KeyEvntSR() {
       dahcnt = 0;
       if (DeCodeVal != 2 ) { // don't recalculate speed based on a single dit (it could have been noise)or a single dah ||(curRatio > 5.0 & period> avgDit )
         CalcDitFlg = true;
+        DitVar = ((7*DitVar)+(abs(avgDit-period)))/8;
+//        Serial.print("DitVar: ");
+//        Serial.println(DitVar);
       }
     }
     FrstSymbl = false;
@@ -1277,6 +1299,7 @@ void Timer_ISR(void) {
     magC = (14 * magC + mag) / 15;
     magL = (14 * magL + (sqrt(GetMagnitudeSquared(Q1, Q2, coeffL)))) / 15;
     magH = (14 * magH + (sqrt(GetMagnitudeSquared(Q1H, Q2H, coeffH)))) / 15;
+    SNR = ((5*SNR)+(ToneLvl / CurNoise))/6;// SNR = ToneLvl / SqlchVal;//
   }
 
   ////////////////////////////////////////////////////////////
@@ -1663,7 +1686,7 @@ void loop()
 //            //Serial.println("SET statsMode =0");
 //          }
           statsMode++;
-          if(statsMode >2) statsMode = 0;
+          if(statsMode >3) statsMode = 0;
           showSpeed();  
         }
         else btnPrsdCnt = 10;
@@ -1697,7 +1720,7 @@ void loop()
         if(btnPrsdCnt == 10){
           buttonEnabled = false;
           ModeCnt += 1;
-          if (ModeCnt == 4) ModeCnt = 0;
+          if (ModeCnt == 2) ModeCnt = 0;//if (ModeCnt == 4) ModeCnt = 0;
           //ModeCntRef = ModeCnt;
           SetModFlgs(ModeCnt);
           enableDisplay();
@@ -2604,16 +2627,169 @@ void chkChrCmplt() {
 
 int CalcAvgPrd(int thisdur) {
   
-  if(magC<10000) return thisdur; //JMH 02020811 Don't do anything with this period. Signal is too noisy to evaluate
-  //if (thisdur > 3.4 * avgDit) thisdur = 3.4 * avgDit; //limit the effect that a single sustained "keydown" event can have
-  if (thisdur > 5.4 * avgDit) thisdur = 5.4 * avgDit; //jmh 20200923 raised the limit to speed up the time needed to adjust to slow code
-  if (thisdur < 0.5 *avgDah){ // this appears to be a "dit"
-    avgDit = (9 * avgDit + thisdur) / 10;
+  //if(magC<10000) return thisdur; //JMH 02020811 Don't do anything with this period. Signal is too noisy to evaluate
+  if( SNR < 4.0)  return thisdur; //JMH 02021004 Don't do anything with this period. Signal is too noisy to evaluate
+  //if (thisdur > 3.4 * avgDit) thisdur = 3.4 * avgDit; //limit the effect that a single sustained "keydown" event can have 
+//  Serial.print(thisdur);
+  int fix = 0;
+  bool UpDtDeadSpace = true;
+  unsigned long BadDedSpce = 0;
+  if(DeCodeVal < 4){ // we're testing the first symbol in a letter and the current dead space is likely a word break or letter break 
+    if(deadSpace > 700){// huge gap & occurred between this symbol and last. Could be a new sender. Reset and start over
+      BadDedSpceCnt = 0;
+      //Serial.print(deadSpace);
+      //Serial.println("  Start Over");
+      return thisdur;
+    }
+    UpDtDeadSpace = false;
+    BadDedSpce = deadSpace;
+    deadSpace = avgDeadSpace;
+    if(curRatio < 2.5 && (float(3600/avgDah)< 14)){// We're running at a slow WPM but the ditto dah ratio is looking "whaky". Let's speed things up 
+       BadDedSpceCnt = 0;
+       avgDah = thisdur;
+       avgDit = avgDah/3;
+       //Serial.print("SpdUp");
+    }
+    else{
+    
+      BadSpceStk[BadDedSpceCnt] = BadDedSpce;
+      BadDedSpceCnt +=1;
+      //AvgBadDedSpce = (2*AvgBadDedSpce+BadDedSpce)/3;
+      if(BadDedSpceCnt == 5){// we've been down this path 3 times in a row, so something is wrong; time to recalibrate
+         BadDedSpceCnt = 0;
+         UpDtDeadSpace = true;
+          //deadSpace = AvgBadDedSpce;
+         // out of the last three space intervals find the shortest two and average their intervals and use that as the current "deadSpace" value 
+         if((BadSpceStk[2]>BadSpceStk[3])&& (BadSpceStk[2]>BadSpceStk[4])) deadSpace = (BadSpceStk[3]+BadSpceStk[4])/2;
+         else if((BadSpceStk[3]>BadSpceStk[2])&& (BadSpceStk[3]>BadSpceStk[4])) deadSpace = (BadSpceStk[2]+BadSpceStk[4])/2;
+         else if((BadSpceStk[4]>BadSpceStk[2])&& (BadSpceStk[4]>BadSpceStk[3])) deadSpace = (BadSpceStk[3]+BadSpceStk[3])/2;
+         LastdeadSpace = deadSpace;
+         if (thisdur < 2*deadSpace){// This "key down" interval looks like a dit
+          if(3*thisdur > 1.5*avgDah){//Well, we thought was a dit, if we treat it as such, it will cause a seismic shift downward. So let's proceed with caution
+            avgDah = 1.5*avgDah;
+            avgDit = avgDah/3;
+            //Serial.print("???");
+          }
+          else{
+          avgDah = 3*thisdur;
+          avgDit = thisdur;
+          //Serial.print("NDT");
+          }
+         }
+         else{// This "key down" interval looks like a Dah
+          avgDah = thisdur;
+          avgDit = thisdur/3;
+          
+         }
+         //Serial.print('#');
+         //Serial.print(BadSpceStk[4]);
+      } //else //Serial.print("1st");
+    }
   }
-  else avgDah = ((4*avgDah)+thisdur)/5; //jmh 20200923 added this line to further to reduce the time needed to correct for slow code 
+  else{ //DecodeVal >= 4; we're analyzing Symbol timing of something other than 'T' or 'E' 
+    if(thisdur > 0.7 * deadSpace){
+      //Serial.print("Mid");// this is pretty commom path
+      BadDedSpceCnt = 0; 
+    }
+    else{
+      if (((deadSpace > 2.5*LastdeadSpace)||(deadSpace < avgDeadSpace/4)) && (LastdeadSpace != 0) ){
+        UpDtDeadSpace = false;
+        BadDedSpce = deadSpace;
+        deadSpace = avgDeadSpace;
+        BadSpceStk[BadDedSpceCnt] = BadDedSpce;
+        BadDedSpceCnt +=1;
+        //AvgBadDedSpce = (2*AvgBadDedSpce+BadDedSpce)/3;
+        if(BadDedSpceCnt == 3){// we've been down this path 3 times in a row, so something is wrong; time to recalibrate (never see this side go true)
+           BadDedSpceCnt = 0;
+           UpDtDeadSpace = true;
+           //deadSpace = AvgBadDedSpce;
+           if((BadSpceStk[0]>BadSpceStk[1]) && (BadSpceStk[0]>BadSpceStk[2])) deadSpace = (BadSpceStk[1]+BadSpceStk[2])/2;
+           else if((BadSpceStk[1]>BadSpceStk[0]) && (BadSpceStk[1]>BadSpceStk[2])) deadSpace = (BadSpceStk[0]+BadSpceStk[2])/2;
+           else if((BadSpceStk[2]>BadSpceStk[0]) && (BadSpceStk[2]>BadSpceStk[1])) deadSpace = (BadSpceStk[0]+BadSpceStk[1])/2;
+           //Serial.print('%');
+        }
+      }else{
+        //Serial.print('!');// this occasionally happens
+        BadDedSpceCnt = 0;
+      }
+    }
+  
+
+  }
+  //use current deadSpace value to see if thisdur is a dit
+  if(thisdur < 1.5 * deadSpace && thisdur > 0.5 * deadSpace ){//Houston, we have a "DIT"
+    avgDit = (5 * avgDit + thisdur) / 6; //avgDit = (3 * avgDit + thisdur) / 4;
+    fix += 1;
+  }
+  else if(thisdur < 1.5 *3* deadSpace && thisdur > 0.5 *3* deadSpace ){ //lets try to use the current deadSpace value to see if thisdur is a dah
+    //it sure smells like a DAH
+    avgDah = (5 * avgDah + thisdur) / 6; //avgDah = (3 * avgDah + thisdur) / 4;
+    fix += 2; 
+  }
+  else // doesn't fit either of the above cases, so lets try something else; the following tests rarely get used
+  {
+    if (thisdur > 2 * avgDah) thisdur = 2 * avgDah; //first, set a max limit to aviod the absurd
+    if (thisdur > avgDah){
+      avgDah = ((2*avgDah)+thisdur)/3;
+      fix += 3;
+    }
+    else if (thisdur < avgDit){
+      avgDit = ((2*avgDit)+thisdur)/3;
+      fix += 4; 
+    }
+    else {// this duration is somewhere between a dit & a dah
+      if (thisdur > avgDah/2){
+        avgDah = ((12*avgDah)+thisdur)/13;
+        fix += 5;
+      }
+      else{
+        avgDit = ((9*avgDit)+thisdur)/10;
+        fix += 6;
+      }
+    }
+  }
+  if(UpDtDeadSpace) LastdeadSpace = deadSpace;
+// old code
+//  if (thisdur > 1.5 * avgDah) thisdur = 1.5 * avgDah; //jmh 20200923 raised the limit to speed up the time needed to adjust to slow code
+//  if (thisdur < 0.5 *avgDah){ // this appears to be a "dit"
+//    if(thisdur > 1.15 *avgDit )  avgDit = (3 * avgDit + thisdur) / 4; //jmh 20201012 raised the limit to speed up the time needed to adjust to slow code
+//    else if(thisdur < avgDah/4 )avgDit = (2 * avgDit + thisdur) / 3;  //jmh 20201012 this line to reduce the time needed to correct for faster code
+//    else avgDit = (4 * avgDit + thisdur) / 5;//(9 * avgDit + thisdur) / 10;
+//  }
+//  else if(thisdur> 1.12*avgDah) avgDah = ((2*avgDah)+thisdur)/3; //jmh 20201005 added this line to further to reduce the time needed to correct for slow code
+//  else avgDah = ((4*avgDah)+thisdur)/5; //jmh 20200923 added this line to further to reduce the time needed to correct for slow code 
+//end old code
+
+  //Serial.print('\t');
+  //Serial.print(thisdur);
+  //Serial.print('\t');
+  //Serial.print(deadSpace);
+  if(!UpDtDeadSpace){
+    //Serial.print('*');
+    //Serial.print(BadDedSpce);
+  }
+  //Serial.print('\t');
+  //Serial.print(avgDeadSpace);
+  //Serial.print('\t');
+  //Serial.print(avgDit);
+  //Serial.print('\t');
+  //Serial.print(avgDah);
+  //Serial.print('\t');
+  //Serial.print(float(3600/avgDah));
   curRatio = (float)avgDah / (float)avgDit;
-  //set limits on the 'avgDit' values
-  if (avgDit > 1000) avgDit = 1000;
+  if(curRatio <2.7 && Bug3){
+    curRatio = 2.7; 
+    avgDit = avgDah/curRatio;
+     //Serial.print('*');
+  }
+  //Serial.print('\t');
+  //Serial.print(curRatio);
+  //Serial.print('\t');
+  //Serial.print(DeCodeVal);
+  //Serial.print('\t');
+  //Serial.println(fix);
+    //set limits on the 'avgDit' values; 80 to 3.1 WPM
+  if (avgDit > 384) avgDit = 384;
   if (avgDit < 15) avgDit = 15;
   if (DeCodeVal == 1) DeCodeVal = 0;
   //      if(Test){
@@ -2621,7 +2797,7 @@ int CalcAvgPrd(int thisdur) {
   //        Serial.print(";  ");
   //        Serial.println("Valid");
   //      }
-  thisdur = avgDah / curRatio;
+  //thisdur = avgDah / curRatio;
   return thisdur;
 }
 
@@ -2806,6 +2982,7 @@ int linearSrchChr(char val, char arr[ARSIZE][2], int sz)
 
 //////////////////////////////////////////////////////////////////////
 void dispMsg(char Msgbuf[50]) {
+  //Serial.println(Msgbuf);
   if (Test && !Bug3) Serial.println(Msgbuf);
   int msgpntr = 0;
   int xoffset = 0;
@@ -3091,6 +3268,11 @@ void showSpeed(){
   case 2:
     sprintf ( buf, "FREQ: %dHz", int(TARGET_FREQUENCYC));
     break;
+  case 3:
+    ratioInt = (int)SNR;
+    ratioDecml = (int)((SNR - ratioInt) * 10);
+    sprintf ( buf, "SNR: %d.%d/1", ratioInt, ratioDecml);
+    break;  
   }
     
   //now, only update/refresh status area of display, if info has changed
