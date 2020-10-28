@@ -1,3 +1,5 @@
+/* REV: 2020-10-28 Made small chnge to Timer_ISR(); added avgdeadspace test to enable shut down "glitch" buffer when interval drops below 36mS (mostly for cootie keys)   
+/* REV: 2020-10-27 Minor change to KeyEvntSR() to improve "dit" & "dah" parsing withbug sent code*/
 /* REV: 2020-10-23 More tweaks to CalcAvgPrd() to fix bug sent code from creating irrational speed and dah/dit ratios*/
 /* REV: 2020-10-12 Changes to CalcAvgPrd() routine to improve response to external wpm speed changes */
 /* REV: 2020-10-05 Minor changes to "CalcAvgPrd" routine to improve wpm speed correction response times */
@@ -24,7 +26,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20201023";
+char RevDate[9] = "20201028";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -546,9 +548,10 @@ char DicTbl1[ARSIZE][2]=
     "."
 };
 //Multi character decode values/table(s)
-#define ARSIZE2 123
+#define ARSIZE2 124
 static unsigned int CodeVal2[ARSIZE2]={
   19,
+  21,
   28,
   31,
   34,
@@ -675,6 +678,7 @@ static unsigned int CodeVal2[ARSIZE2]={
 
 char DicTbl2[ARSIZE2][5]={
   "UT",
+  "<AA>",
   "GE",
   "TO",
   "VE",
@@ -1065,7 +1069,7 @@ void KeyEvntSR() {
     if ((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah)) NrmlDah = true;
     //if ((period >= 1.4 * avgDit)&& Bug3) NrmlDah = true; // if in bug mode we'll let a slightly shorter key closer count as a "Dah". 
     //else if ((period >= (1.4*avgDit)+(2*DitVar))&& Bug3){  //JMH 20201002 if in bug mode we'll let a slightly shorter key closer count as a "Dah".
-    else if ((period >= (1.4*avgDit)+(DitVar))&& Bug3){
+    else if ((period >= (1.46*avgDit)+(DitVar))&& Bug3){
       NrmlDah = true;
       Serial.print("DitVar: ");
       Serial.println(DitVar); 
@@ -1073,7 +1077,8 @@ void KeyEvntSR() {
     bool NrmlDit = false;
     //if ((period < 1.3 * avgDit)|| (period < 0.4 * avgDah)) NrmlDit = true;
     //if (((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah))||(DeCodeVal ==2 & period >= 1.5 * lastDit)) { // it smells like a "Dah".
-    if ((NrmlDah)||((DeCodeVal ==2) & (period > 1.4 * avgDit)&& (Bug2 || Bug3))) { // it smells like a "Dah".  
+    //if ((NrmlDah)||((DeCodeVal ==2) & (period > 1.46 * avgDit)&& (Bug2 || Bug3))) { // it smells like a "Dah".
+     if ((NrmlDah)||((DeCodeVal ==2) & ((period-10) > 1.4 * avgDit)&& (Bug2 || Bug3))) { // it smells like a "Dah".  think there's 10 millisecond uncertainty due to the sampling speed, sowe're going to use the smallest possible interval for this decision
       //JMH added 20020206
       DeCodeVal = DeCodeVal + 1; // it appears to be a "dah' so set the least significant bit to "one"
       //if(Bug3 & SCD& badLtrBrk) sprintf(DeBugMsg, "1%s", DeBugMsg);
@@ -1345,7 +1350,8 @@ void Timer_ISR(void) {
   if (GudTone) delayLine2 |= B00000001;
   if (toneDetect) delayLine |= B00000001;
   //Use For Slow code [<27WPM] fill in the glitches  pin is left open
-  if (1) { //if(digitalRead(SlowData)){
+  //20201028 added "avgDeadSpace>35" condition - primarilly for "Cootie" Ops which seem to use unusually short dead space intervals; Should/could also help wid High speed decoding
+  if (avgDeadSpace>35) { //if(digitalRead(SlowData)){
     if (((delayLine ^ B00001110) == 4 ) || ((delayLine ^ B00001111) == 4)) delayLine |= B00000100;
     if (((delayLine ^ B00000001) == B00000100) || ((delayLine ^ B00000000) == B00000100)) delayLine &= B11111011;
   }
@@ -2439,43 +2445,33 @@ void ChkDeadSpace(void)
           avgDeadSpace = (15 * avgDeadSpace + deadSpace) / 16;
         }
       } else {
-        if ((deadSpace < lastDah & DeCodeVal != 1)) { //20200817 added "DeCodeVal != 1" for more consistent letter break calcs
+        if ((deadSpace < lastDah) && (DeCodeVal != 1)) { //20200817 added "DeCodeVal != 1" for more consistent letter break calcs
           //if (DeCodeVal != 1) { //ignore letterbrk dead space intervals
           if(ltrCmplt < -350){  //ignore letterbrk dead space intervals
             //avgDeadSpace = (3 * avgDeadSpace + deadSpace) / 4;
-            avgDeadSpace = (7 * avgDeadSpace + deadSpace) / 8;
-          } else AvgLtrBrk = ((9 * AvgLtrBrk) + deadSpace) / 10;
+            avgDeadSpace = (5 * avgDeadSpace + deadSpace) / 6;
+            //Serial.print("avgDeadSpace1: ");
+            //Serial.print(deadSpace);
+            //Serial.print('\t');
+          } else {
+            AvgLtrBrk = ((9 * AvgLtrBrk) + deadSpace) / 10;
+            //Serial.print("AvgLtrBrk");
+            //Serial.print('\t');
+          }
         }
-//        Serial.print("\t");
-//        Serial.print(deadSpace);
-//        Serial.print("\t");
-//        Serial.print(avgDeadSpace);
-        if (NrmMode && (avgDeadSpace < avgDit)) { // running Normall mode; use Dit timing to establish minmum "space" interval
-          if(ltrCmplt < -350) avgDeadSpace = avgDit; //ignore letterbrk dead space intervals
+        if (NrmMode && (avgDeadSpace < avgDit)&& !Bug3) { // running Normall mode; use Dit timing to establish minmum "space" interval
+          if(ltrCmplt < -350){  //ignore letterbrk dead space intervals
+            avgDeadSpace = avgDit; //ignore letterbrk dead space intervals
+            //Serial.print("avgDeadSpace2: ");
+            //Serial.print(avgDit);
+            //Serial.print('\t');
+          }
 //          Serial.print("  Path 3: ");
 //          Serial.print(avgDeadSpace);
         }
       }
     }
-//    Serial.print("\n");
-    //    Serial.print("; ");
-    //    Serial.print(avgDeadSpace);
-    //    Serial.print("; ");
-    //    Serial.print(avgDit);
-    //    Serial.print("; ");
-    //    Serial.print(avgDah);
-    //    Serial.print("; ");
-    //    Serial.print(ltrBrk);
-    //    Serial.print("; ");
-    //    Serial.print(AvgLtrBrk);
-    //    Serial.print("; ");
-    //    Serial.print(wordBrk);
-    //    Serial.print("; ");
-    //    Serial.print(lastWrdVal);
-    //    Serial.print("; ");
-    //    Serial.print(NuWrd);
-    //    Serial.print("; ");
-    //    Serial.println(DeCodeVal);
+    //Serial.println("");
     if (NuWrd) NuWrdflg = true;;
   }
 }
@@ -2673,7 +2669,7 @@ int CalcAvgPrd(int thisdur) {
           else{
           avgDah = 3*thisdur;
           avgDit = thisdur;
-          //Serial.print("NDT");
+          //Serial.print("NDT");// "Not a Dit"
           }
          }
          else{// This "key down" interval looks like a Dah
@@ -2777,8 +2773,8 @@ int CalcAvgPrd(int thisdur) {
   //Serial.print('\t');
   //Serial.print(float(3600/avgDah));
   curRatio = (float)avgDah / (float)avgDit;
-  if(curRatio <2.7 && Bug3){
-    curRatio = 2.7; 
+  if(curRatio <2.5 && Bug3){
+    curRatio = 2.5; 
     avgDit = avgDah/curRatio;
      //Serial.print('*');
   }
