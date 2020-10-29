@@ -9,7 +9,7 @@
  * JMH 20200127 Modified Skecth to Run from STM32F103C8 timer based interrupt
 */
 
-#include <Adafruit_GFX.h>
+#include "Adafruit_GFX.h"
 //#include <gfxfont.h>
 //#include <MCUFRIEND_kbv.h>
 #include "MCUFRIEND_kbv.h"
