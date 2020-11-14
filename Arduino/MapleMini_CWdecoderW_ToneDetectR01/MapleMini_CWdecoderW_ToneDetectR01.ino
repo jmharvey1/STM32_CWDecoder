@@ -1,3 +1,4 @@
+/* REV: 2020-11-13 Yet another tweak to KeyEvntSR() to improve letter parsing with bug sent code*/ 
 /* REV: 2020-10-28 Made small chnge to Timer_ISR(); added avgdeadspace test to enable shut down "glitch" buffer when interval drops below 36mS (mostly for cootie keys)   
 /* REV: 2020-10-27 Minor change to KeyEvntSR() to improve "dit" & "dah" parsing withbug sent code*/
 /* REV: 2020-10-23 More tweaks to CalcAvgPrd() to fix bug sent code from creating irrational speed and dah/dit ratios*/
@@ -26,7 +27,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20201028";
+char RevDate[9] = "20201113";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -385,6 +386,7 @@ float lastDit = avgDit;
 
 int badKeyEvnt = 0;
 volatile unsigned long avgDeadSpace = avgDit;
+volatile unsigned long BadDedSpce = 0;
 volatile int space = 0;
 unsigned long lastDah = avgDah;
 volatile unsigned long letterBrk = 0; //letterBrk =avgDit;
@@ -422,7 +424,7 @@ int lastWPM = 0;
 int state = 0;
 int DeBug = 0;
 int BadDedSpceCnt =0;
-unsigned long AvgBadDedSpce =0;
+//unsigned long AvgBadDedSpce =0;
 unsigned long BadSpceStk[5];
 //int BPtr = 0;
 char DeBugMsg[150];
@@ -936,7 +938,7 @@ void KeyEvntSR() {
               DeCodeVal = DCVStrd[1];
               dletechar = true;
               FrstSymbl = true;
-              ConcatSymbl = true;// used to verify (at the next letter break we did the right thing;
+              ConcatSymbl = true;// used to verify (at the next letter break) we did the right thing;
             }
           else badLtrBrk = false;
         }
@@ -1079,8 +1081,45 @@ void KeyEvntSR() {
     //if (((period >= 1.8 * avgDit)|| (period >= 0.8 * avgDah))||(DeCodeVal ==2 & period >= 1.5 * lastDit)) { // it smells like a "Dah".
     //if ((NrmlDah)||((DeCodeVal ==2) & (period > 1.46 * avgDit)&& (Bug2 || Bug3))) { // it smells like a "Dah".
      if ((NrmlDah)||((DeCodeVal ==2) & ((period-10) > 1.4 * avgDit)&& (Bug2 || Bug3))) { // it smells like a "Dah".  think there's 10 millisecond uncertainty due to the sampling speed, sowe're going to use the smallest possible interval for this decision
-      //JMH added 20020206
-      DeCodeVal = DeCodeVal + 1; // it appears to be a "dah' so set the least significant bit to "one"
+     
+       if((MsgChrCnt[1] >0) && (deadSpace < 2.76*avgDeadSpace)&& (deadSpace > 1.4* avgDeadSpace) && !NuWrd && !dletechar && Bug3){
+       //if(0){
+        DeCodeVal = DCVStrd[1];
+        DeCodeVal = DeCodeVal << 1;
+        DeCodeVal = DeCodeVal + 1;
+        dletechar = true;
+        FrstSymbl = false;//FrstSymbl = true;
+        ConcatSymbl = true;// used to verify (at the next letter break) we did the right thing;
+//        Serial.print("\tXX\t");
+//        Serial.print(deadSpace);
+//        Serial.print('\t');
+//        Serial.print(avgDeadSpace);
+//        Serial.print('\t');
+//        Serial.print(DCVStrd[1]);
+//        Serial.print('\t');
+//        Serial.println(DeCodeVal); 
+      }
+      else{
+        //JMH added 20020206
+        DeCodeVal = DeCodeVal + 1; // it appears to be a "dah' so set the least significant bit to "one"
+//        Serial.print("\tYY\t");
+//        Serial.print(deadSpace);
+//        Serial.print('\t');
+//        Serial.print(avgDeadSpace);
+//        Serial.print('\t');
+//        Serial.print(DCVStrd[1]);
+//        Serial.print('\t');
+//         Serial.print(DCVStrd[0]);
+//        Serial.print('\t');
+//        Serial.print(DeCodeVal);
+//        Serial.print("\tdletechar = ");
+//        if(dletechar)Serial.print("true;  ");
+//        else Serial.print("false;  ");
+//        Serial.print("\ConcatSymbl = ");
+//        if(ConcatSymbl)Serial.print("true");
+//        else Serial.print("false");
+//        Serial.println(""); 
+      }
       //if(Bug3 & SCD& badLtrBrk) sprintf(DeBugMsg, "1%s", DeBugMsg);
       if(Bug3 && SCD && Test){
         //sprintf(DeBugMsg, "1%s", DeBugMsg);
@@ -2629,7 +2668,8 @@ int CalcAvgPrd(int thisdur) {
 //  Serial.print(thisdur);
   int fix = 0;
   bool UpDtDeadSpace = true;
-  unsigned long BadDedSpce = 0;
+  BadDedSpce = 0;
+  //Serial.print('\t');
   if(DeCodeVal < 4){ // we're testing the first symbol in a letter and the current dead space is likely a word break or letter break 
     if(deadSpace > 700){// huge gap & occurred between this symbol and last. Could be a new sender. Reset and start over
       BadDedSpceCnt = 0;
@@ -2679,7 +2719,16 @@ int CalcAvgPrd(int thisdur) {
          }
          //Serial.print('#');
          //Serial.print(BadSpceStk[4]);
-      } //else //Serial.print("1st");
+      } else{
+        
+        //Serial.print(BadDedSpce);
+        //Serial.print('\t');
+        //Serial.print(avgDeadSpace);
+//        Serial.print("\tNuWrd = ");
+//        if(NuWrd)Serial.println("true");
+//        else Serial.println("false");
+//        Serial.print("\t1st");
+      }
     }
   }
   else{ //DecodeVal >= 4; we're analyzing Symbol timing of something other than 'T' or 'E' 
@@ -3039,19 +3088,19 @@ void dispMsg(char Msgbuf[50]) {
       if(Pgbuf[cnt-(CPL+1)]== 'P'  && Pgbuf[cnt-(CPL)]=='D'){ //test for "PD"
         sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "AND)"); //"true"; Insert preceeding character plus correction "AND"
       }
-      if(Pgbuf[cnt-(CPL+1)]== '6'  && Pgbuf[cnt-(CPL)]=='E'){ //test for "PD"
-        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THE)"); //"true"; Insert preceeding character plus correction "AND"
+      if(Pgbuf[cnt-(CPL+1)]== '6'  && Pgbuf[cnt-(CPL)]=='E'){ //test for "6E"
+        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THE)"); //"true"; Insert preceeding character plus correction "THE"
       }
-      if(Pgbuf[cnt-(CPL+1)]== '6' && Pgbuf[cnt-(CPL)]=='A'){ //test for "PD"
-        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THA)"); //"true"; Insert preceeding character plus correction "AND"
+      if(Pgbuf[cnt-(CPL+1)]== '6' && Pgbuf[cnt-(CPL)]=='A'){ //test for "6A"
+        sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "THA)"); //"true"; Insert preceeding character plus correction "THA"
       }
       if(Pgbuf[cnt-(CPL+1)]== '9' && Pgbuf[cnt-(CPL)]=='E'){ //test for "9E"
         sprintf ( Msgbuf,  " (ONE)" ); //"true"; Insert correction "ONE"
       }
-      if(Pgbuf[cnt-(CPL+2)]=='P'&& Pgbuf[cnt-(CPL+1)]=='L' && Pgbuf[cnt-(CPL)]=='L'){ //test for "PD"
+      if(Pgbuf[cnt-(CPL+2)]=='P'&& Pgbuf[cnt-(CPL+1)]=='L' && Pgbuf[cnt-(CPL)]=='L'){ //test for "PLL"
         sprintf ( Msgbuf, " (WELL)" ); //"true"; Insert correction "WELL"
       }
-      if((Pgbuf[cnt-(CPL+2)]=='N' || Pgbuf[cnt-(CPL+2)]=='L') && Pgbuf[cnt-(CPL+1)]=='M'  && Pgbuf[cnt-(CPL)]=='Y'){ //test for "PD"
+      if((Pgbuf[cnt-(CPL+2)]=='N' || Pgbuf[cnt-(CPL+2)]=='L') && Pgbuf[cnt-(CPL+1)]=='M'  && Pgbuf[cnt-(CPL)]=='Y'){ //test for "NMY/LMY"
         sprintf ( Msgbuf, " (%c%s", Pgbuf[cnt-(CPL+2)], "OW)"); //"true"; Insert correction "NOW"/"LOW"
       }
       if(Pgbuf[cnt-(CPL+2)]=='T'&& Pgbuf[cnt-(CPL+1)]=='T' && Pgbuf[cnt-(CPL)]=='O'){ //test for "PD"
