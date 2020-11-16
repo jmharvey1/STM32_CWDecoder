@@ -1,3 +1,4 @@
+/* REV: 2020-11-15 Changed Button2 to ModeBtn & changed color scheme to improve User experience*/
 /* REV: 2020-11-13 Yet another tweak to KeyEvntSR() to improve letter parsing with bug sent code*/ 
 /* REV: 2020-10-28 Made small chnge to Timer_ISR(); added avgdeadspace test to enable shut down "glitch" buffer when interval drops below 36mS (mostly for cootie keys)   
 /* REV: 2020-10-27 Minor change to KeyEvntSR() to improve "dit" & "dah" parsing withbug sent code*/
@@ -27,7 +28,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20201113";
+char RevDate[9] = "20201115";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -1661,7 +1662,7 @@ void setup() {
    MsgChrCnt[0] = 0;
 
   DrawButton();
-  Button2();
+  ModeBtn();
   WPMdefault();
   tft.setCursor(textSrtX, textSrtY);
   tft.setTextColor(WHITE);//tft.setTextColor(WHITE, BLACK);
@@ -1769,7 +1770,7 @@ void loop()
           //ModeCntRef = ModeCnt;
           SetModFlgs(ModeCnt);
           enableDisplay();
-          Button2();
+          ModeBtn();
         }
         else btnPrsdCnt = 10;
       }
@@ -2446,7 +2447,7 @@ void  SftReset(){
   enableDisplay();
   tft.fillScreen(BLACK);
   DrawButton();
-  Button2();
+  ModeBtn();
   WPMdefault();
   px = 0;
   py = 0;
@@ -3260,7 +3261,7 @@ void DrawButton() {
 }
 ///////////////////////////////////////////////////////////
 
-void Button2() {
+void ModeBtn() {
   //Create Norm/Bug Button
   int Bposx = 210;
   int Bwidth = 80;
@@ -3268,10 +3269,18 @@ void Button2() {
   int Bheight = 40;
   if (scrnHeight == 320) Bposy = scrnHeight - (Bheight + 5);
   if (scrnWidth == 480) Bposx = Bposx + 32; //Bposx = Bposx +20;
-  tft.fillRect(Bposx, Bposy, Bwidth, Bheight, GREEN);
+  switch (ModeCnt) {
+    case 0:
+      tft.fillRect(Bposx, Bposy, Bwidth, Bheight, GREEN);
+      tft.setTextColor(WHITE);
+      break;
+    case 1:
+      tft.fillRect(Bposx, Bposy, Bwidth, Bheight, YELLOW);
+      tft.setTextColor(BLACK);
+      break;
+  }
   tft.drawRect(Bposx, Bposy, Bwidth, Bheight, WHITE);
   tft.setCursor(Bposx + 11, Bposy + 12);
-  tft.setTextColor(WHITE);
   tft.setTextSize(2);
   //Serial.println(ModeCnt);
   switch (ModeCnt) {
@@ -3291,6 +3300,7 @@ void Button2() {
       tft.print(ModeCnt);
       break;
   }
+  tft.setTextColor(WHITE);
 }
 ///////////////////////////////////////////////////////////
 
