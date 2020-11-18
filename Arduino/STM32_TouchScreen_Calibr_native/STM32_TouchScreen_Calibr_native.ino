@@ -10,7 +10,7 @@
 #define TOUCH_ORIENTATION  PORTRAIT
 #define TITLE "TouchScreen.h GFX Calibration"
 
-#include <Adafruit_GFX.h>
+#include "Adafruit_GFX.h"
 #include "MCUFRIEND_kbv.h"
 MCUFRIEND_kbv tft;
 
