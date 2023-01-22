@@ -26,6 +26,9 @@ specifically these:
 If after loading the reported parameters, your display's touch points are NOT aligned with the buttons, try swapping the
 TS_TOP and TS_BOT values. 
 
+A General Note About Display Driver ID's:
+These displays while the same in outward appearance are built using many different driver ICs & the IDs that they report, when queried are numerous. But when it comes to actual signal mamagement, they often behave like a few known standards. In the Blue Pill version of the decoder, the ID is assigned in (or near) line 1109, and tells the display library what signal protocol to follow. If the ID reported, using the diagnostic tools above, doesn't work correctly, try one of the other IDs shown (but commented out in the following lines) Often a "bad" display will work just fine using another "known" ID.
+
 New to this update are ".bin" files for the blue pill version of the decoder. Using STM's cubeprogrammer and these .bin files, the program(s) can be flashed directly to your bluepill w/o having to use the Adruino IDE to compile them. This can be a quicker way to get your decoder up and running. But will only be truely useful, if your touchscreen matches what I used, when (in particular) the BluePill_CWdecoderW_ToneDetect was compiled.
 
 Operational Notes related to the MapleMini_CWdecoderW_ToneDetectR01 only:
