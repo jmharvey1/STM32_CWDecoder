@@ -8,7 +8,7 @@
          https://github.com/adafruit/Adafruit-GFX-Library
          https://github.com/adafruit/Touch-Screen-Library
 */
-char RevDate[9] = "20230122";
+char RevDate[9] = "20230124";
 // MCU Friend TFT Display to STM32F pin connections
 //LCD        pin |D7 |D6 |D5 |D4 |D3 |D2 |D1 |D0 | |RD  |WR |RS |CS |RST | |SD_SS|SD_DI|SD_DO|SD_SCK|
 //Blue Pill  pin |PA7|PA6|PA5|PA4|PA3|PA2|PA1|PA0| |PB0 |PB6|PB7|PB8|PB9 | |PA15 |PB5  |PB4  |PB3   | **ALT-SPI1**
@@ -123,6 +123,8 @@ int ToneOnCnt = 0;
 int KeyState = 0;
 int ltrCmplt = -1500;
 
+int oldpy = 0;
+int oldpx = 0;
 /*
    Note. Library uses SPI1
    Connect the WS2812B data input to MOSI on your board.
@@ -169,7 +171,10 @@ bool toneDetect = false;
 //values found using "BluePill_TouchScreen_Calibr_native; Because this sketch runs in porteait mode, the Calibr values require translation
 
 const int XP=PB6,XM=PA7,YP=PA6,YM=PB7; // touch screen Pin values
-const int TS_LEFT=944,TS_RT=98,TS_TOP=898,TS_BOT=128; //touch screen corner values
+//const int TS_LEFT=944,TS_RT=98,TS_TOP=898,TS_BOT=128; //touch screen corner values
+const int TS_LEFT=946,TS_RT=99,TS_TOP=119,TS_BOT=891;
+
+
 
 
 TouchScreen_kbv ts(XP, YP, XM, YM, 300);
@@ -315,6 +320,13 @@ int cursorX = 0;
 int wpm = 0;
 int lastWPM = 0;
 int state = 0;
+
+int Cposx; //clearx
+int Cwidth; //clear width
+int Bposy;
+int Bheight;
+int Mposx; //Modex
+int Mwidth; //Mode width
 //Old Code table; Superceded by two new code tables (plus their companion index tables)
 //char morseTbl[] = {
 //  '~', '\0',
@@ -881,6 +893,7 @@ void readResistiveTouch(void)
       btnPrsdCnt = 0;
       buttonEnabled = true;
       SwMode = false;
+     
       //ensure that the touch point no longer represents a valid point on the display
       px = 1000; 
       py = 1000;
@@ -1085,6 +1098,18 @@ void Timer_ISR(void) {
   CurCnt = 0;
 } //End Timer2 ISR
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
+bool BtnValid(){
+   if (btnPrsdCnt < 10) { // press screen 'debounce' interval
+      btnPrsdCnt += 1;
+      return false;
+    }
+    else { // user pressed screen long enough to indicate real desire to change/flip the status info
+      btnPrsdCnt = 10;
+      SwMode = true;
+      return true;
+    }
+}
+//////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void setup() {
   //setup Digital signal output pin
@@ -1117,18 +1142,17 @@ void setup() {
   scrnHeight = tft.height();
   scrnWidth = tft.width();
   displayW = scrnWidth;
-//  if (scrnHeight == 320) { //we are using a 3.5 inch screen
-//    row = 10; //max number of decoded text rows that can be displayed
-//    ylo = 0; //button touch reading 3.5" screen
-//    yhi = 40; //button touch reading 3.5" screen
-//    Stxl = 0; //Status touch reading 3.5" screen
-//    Stxh = 150; //Status touch reading 3.5" screen
-//    bxlo = 155; //button touch reading 3.5" screen
-//    bxhi = 236; //button touch reading 3.5" screen
-//    gxlo  = 238; //button touch reading 3.5" screen
-//    gxhi  = 325; //button touch reading 3.5" screen
-//   }
-
+  Cposx = 130; //clearx
+  Cwidth = 80; //clear width
+  Bposy = 195;
+  Bheight = 40;
+  Mposx = 210; //Modex
+  Mwidth = 80; //Mode width
+  if (scrnHeight == 320) Bposy = scrnHeight - (Bheight + 5);
+  if (scrnWidth == 480){
+    Cposx = Cposx + 32;
+    Mposx = Mposx + 32;
+  }
   DrawButton();
   Button2();
   WPMdefault();
@@ -1162,6 +1186,7 @@ void setup() {
 */
 void loop()
 {
+
   ChkDeadSpace();
   SetLtrBrk();
   if (CalcDitFlg) { // moved this from interupt routine to reduce time needed to process interupts
@@ -1185,22 +1210,17 @@ void loop()
 //    Serial.print("\t; px: "); Serial.print(px);
 //    Serial.print("\t; py: "); Serial.println(py);
 //    buttonEnabled = false;
-//    If (NoTchCnt > 0){
-//      buttonEnabled = true
-//      NoTchCnt = 0;
-//    }
-    
-    if (px > Stxl && px < Stxh && py > ylo && py < yhi && !SwMode) { //User has touched a point inside the status area, & wants to change WPM/avgtiming
+      tft.drawFastVLine(oldpx, oldpy-5, 10, TFT_BLACK);
+      tft.drawFastHLine(oldpx-5, oldpy, 10, TFT_BLACK);
+      tft.drawFastVLine(px, py-5, 10, TFT_RED);
+      tft.drawFastHLine(px-5, py, 10, TFT_RED);
+      oldpy = py;
+      oldpx = px;
+   
+    if (px > Stxl && px < Stxh && py > Bposy && py < (Bposy+Bheight) && !SwMode) { //if (px > Stxl && px < Stxh && py > ylo && py < yhi && !SwMode) { //User has touched a point inside the status area, & wants to change WPM/avgtiming
       //Note: SwMode gets reset to "false" in 'ShowSpeed' routine, after user quits pressing the status area of the screen.
       //Serial.println("Status Area");
-      if (btnPrsdCnt < 10) { // press screen 'debounce' interval
-        btnPrsdCnt += 1;
-        //Serial.println(btnPrsdCnt);
-      }
-      else { // user pressed screen long enough to indicate real desire to change/flip the status info
-        if(btnPrsdCnt == 10){
-          SwMode = true;
-          //Serial.println("Status Area");
+      if(BtnValid()){
           if (statsMode == 0) {
             statsMode = 1;
             //Serial.println("SET statsMode =1");
@@ -1210,52 +1230,47 @@ void loop()
           }
           showSpeed();  
         }
-        else btnPrsdCnt = 10;
+    }
+     if (px > Cposx && px < (Cposx+Cwidth) && py > Bposy && py < (Bposy+Bheight) && !SwMode) //if (px > bxlo && px < bxhi && py > ylo && py < yhi && buttonEnabled) // The user has touched a point inside the Blue rectangle, & wants to clear the Display
+    {
+       if(BtnValid()){
+      //   Serial.print("Clear Screen");
+        enableDisplay();
+        tft.fillScreen(BLACK);
+        DrawButton();
+        Button2();
+        WPMdefault();
+        px = 0;
+        py = 0;
+        showSpeed();
+        tft.setCursor(textSrtX, textSrtY);
+    //    if ( interruptPin == 2) enableINT();
+        for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
+          Pgbuf[i] = 0;
+        cnt = 0;
+        curRow = 0;
+        offset = 0;
+        cursorX = 0;
+        cursorY = 0;
+      }
+      
+    } else if (px > Mposx && px < (Mposx+Mwidth) && py > Bposy && py < (Bposy+Bheight) && !SwMode) {//if (px > gxlo && px < gxhi && py > ylo && py < yhi && buttonEnabled) { //User has touched a point inside the Green Mode rectangle, & wants to change Mode (normal/bug1/bug2)
+       if(BtnValid()){
+        px = 0; //kill button press
+        py = 0; //kill button press
+        buttonEnabled = false;
+        ModeCnt += 1;
+        if (ModeCnt >= 3) ModeCnt = 0;
+        ModeCntRef = ModeCnt;
+        SetModFlgs(ModeCnt);
+        enableDisplay();
+        Button2();
       }
 
     }
+
   }//end tft display "touch" check
-
-    if (px > bxlo && px < bxhi && py > ylo && py < yhi && buttonEnabled) // The user has touched a point inside the Blue rectangle, & wants to clear the Display
-    { //reset (clear) the Screen
-      buttonEnabled = false; //Disable button
-      //   Serial.print("Clear Screen");
-  //    if ( interruptPin == 2) KillINT();
-  //    else enableDisplay();
-      enableDisplay();
-      tft.fillScreen(BLACK);
-      DrawButton();
-      Button2();
-      WPMdefault();
-//      avgDit = 80; //average 'Dit' duration
-//      avgDeadSpace = avgDit;
-//      AvgLtrBrk = 3*avgDit;
-//      avgDah = 240;
-//      wpm = CalcWPM(avgDit);
-      px = 0;
-      py = 0;
-      showSpeed();
-      tft.setCursor(textSrtX, textSrtY);
-  //    if ( interruptPin == 2) enableINT();
-      for ( int i = 0; i <  sizeof(Pgbuf);  ++i )
-        Pgbuf[i] = 0;
-      cnt = 0;
-      curRow = 0;
-      offset = 0;
-      cursorX = 0;
-      cursorY = 0;
-    } else if (px > gxlo && px < gxhi && py > ylo && py < yhi && buttonEnabled) { //User has touched a point inside the Green Mode rectangle, & wants to change Mode (normal/bug1/bug2)
-      px = 0; //kill button press
-      py = 0; //kill button press
-      buttonEnabled = false;
-      ModeCnt += 1;
-      if (ModeCnt >= 3) ModeCnt = 0;
-      ModeCntRef = ModeCnt;
-      SetModFlgs(ModeCnt);
-      enableDisplay();
-      Button2();
-    }
-
+   
   chkChrCmplt();
   while (CodeValBuf[0] > 0) {
     DisplayChar(CodeValBuf[0]);

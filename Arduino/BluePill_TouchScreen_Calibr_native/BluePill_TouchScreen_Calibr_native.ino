@@ -383,8 +383,8 @@ void report()
     //.kbv show human values
     TS_LEFT = (calx >> 14) & 0x3FFF;
     TS_RT   = (calx >>  0) & 0x3FFF;
-    TS_BOT  = (caly >> 14) & 0x3FFF;
-    TS_TOP  = (caly >>  0) & 0x3FFF;
+    TS_TOP  = (caly >> 14) & 0x3FFF;
+    TS_BOT  = (caly >>  0) & 0x3FFF;
     TS_WID  = ((cals >> 12) & 0x0FFF) + 1;
     TS_HT   = ((cals >>  0) & 0x0FFF) + 1;
     TS_SWAP = (cals >> 31);
