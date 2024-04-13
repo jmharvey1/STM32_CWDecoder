@@ -9,7 +9,7 @@
 #define LANDSCAPE 0
 
 #define TOUCH_ORIENTATION  PORTRAIT
-#include <Adafruit_GFX.h>
+#include "Adafruit_GFX.h"
 #include "MCUFRIEND_kbv.h"
 MCUFRIEND_kbv tft;
 
